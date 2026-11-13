@@ -1,4 +1,4 @@
-High-level Minimum Viable Product for VAI
+High-level Minimum Viable Product for VAI (Voiceimprint AI)
 
 [Disabled Worker] 
    │  (Guided Interview)
