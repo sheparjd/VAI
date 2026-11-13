@@ -1,0 +1,16 @@
+# Web Platform & API
+fastapi>=0.115.0
+uvicorn[standard]>=0.32.0
+jinja2>=3.1.4
+python-multipart>=0.0.12
+
+# Database & ORM
+sqlalchemy>=2.0.35
+psycopg[binary]>=3.2.0
+pydantic-settings>=2.6.0
+python-dotenv>=1.0.1
+
+# Local AI & Personal Memory (RAG)
+ollama>=0.3.3
+chromadb>=0.5.15
+httpx>=0.27.2

@@ -1,0 +1,42 @@
+{
+  "schema_version": "0.1.0",
+  "worker_profile": {
+    "display_name": "Alex M.",
+    "headline": "Technical Writer & Root Cause Analyst",
+    "bio_summary": "Experienced in breaking down complex IT workflows into clear, step-by-step documentation.",
+    "primary_domains": [
+      "Technical Documentation",
+      "Data Cleanup & Structuring",
+      "Process Troubleshooting"
+    ]
+  },
+  "communication_style": {
+    "tone": "Clear, calm, direct, and professional",
+    "formatting_preferences": [
+      "Use short paragraphs and bullet points",
+      "Avoid corporate buzzwords or filler"
+    ],
+    "sample_phrases": [
+      "Here is the breakdown of what happened and how to fix it:",
+      "Before proceeding, please confirm the following details:"
+    ]
+  },
+  "boundaries_and_guardrails": {
+    "never_accept_tasks_involving": [
+      "Real-time phone or video calls",
+      "Legal or medical diagnosis advice",
+      "Sharing personal health or location details"
+    ],
+    "require_human_approval": {
+      "before_accepting_job": true,
+      "before_submitting_final_deliverable": true,
+      "when_confidence_is_low": true
+    }
+  },
+  "accessibility_and_pacing": {
+    "preferred_input_mode": "voice_or_text",
+    "max_active_tasks": 2,
+    "review_window_hours": 24,
+    "auto_pause_when_offline": true
+  }
+}

@@ -1,0 +1,186 @@
+High-level Minimum Viable Product for VAI
+
+[Disabled Worker] 
+   │  (Guided Interview)
+   ▼
+[Local VAI Engine] ◄──► [Personal Knowledge Store (RAG)]
+   │  (Polls for jobs & submits approved work via API)
+   ▼
+[VAI Web Platform / Marketplace]
+   ▲  (Posts tasks, reviews deliverables, pays worker)
+   │
+[Employer]
+
+
+
+1. The VAI / Worker Side (Local-First & Personal)
+
+This side lives as close to the individual as possible to protect privacy, personal ownership, and accessibility.
+• Accessible Interview Interface: A lightweight web or desktop front end supporting voice-to-text, switch access, or text input. An Interviewer Agent asks structured, adaptive questions to capture the person’s expertise, communication style, and decision-making rules.
+• Personal Knowledge & Style Store (The "Voiceprint"):
+	• Structured Memory (RAG): A local vector database (like Chroma or SQLite-vec) storing the worker's Q&A transcripts, domain knowledge, and sample outputs.
+	• Behavioral Guardrails: A simple configuration file (voiceprint.json) defining tone, hard boundaries, and tasks requiring human approval.
+• Local Inference Engine: Runs an open-weights model (such as Llama or Mistral via Ollama) on the worker’s machine or a private, user-controlled server.
+• Worker Control Dashboard: A simple approval queue where the person can review drafted work, set availability, and track earnings without needing high-speed real-time typing.
+
+2. The Employer Side (Marketplace & Task Portal)
+
+This is the public-facing web application where businesses post work and interact with VAI representatives.
+• Employer Portal: A straightforward web dashboard where clients browse VAI profiles (highlighting each worker's unique background and domain focus), post scoped tasks, and submit prompts or files.
+• Task & Escrow Manager: Handles job states (Open, In Progress, Human Review, Completed) and tracks payouts so the worker earns directly from completed deliverables.
+• Async Communication Bridge: Instead of demanding instant live chat—which creates barriers for many disabled workers—the platform uses an asynchronous task queue.
+
+3. The Bridge Layer (Connecting Local VAI to the Web)
+
+To keep the MVP simple and secure without requiring complex home-network port forwarding:
+• Outbound Polling API: The worker's local VAI client securely polls the marketplace backend for assigned tasks via standard HTTPS/REST or WebSockets.
+• Human-in-the-Loop (HITL) Gate: Before any deliverable is sent back to an employer, the VAI flags low-confidence outputs or final drafts for a quick one-click approval from the human worker.
+
+
+
+TECH STACK for PROTOTYPE
+
+
+Stack Summary Table
+
+
+Layer                       	   Recommended Tool	                                    Why It Fits VAI
+
+Local AI Engine	                   Ollama + Llama/Mistral                            	Free, private, open-weights execution on local hardware
+Personal Memory	                   ChromaDB / SQLite-vec	                            Portable, single-file local vector store for the user's voiceprint
+Backend API	                       Python + FastAPI                                  	High performance, unified Python stack, auto-generated docs
+Marketplace DB	                   PostgreSQL (Neon)                                 	Reliable relational schema for tasks, profiles, and audit logs
+Frontend UI	                       HTML/CSS + HTMX	                                    High accessibility, low complexity, fast prototyping
+
+
+
+
+GITHUB REPO STRUCTURE
+
+voiceprint-ai/
+├── local_node/                  # Runs privately on the worker's machine
+│   ├── interviewer.py           # Guided Q&A script to capture the user's "voiceprint"
+│   ├── worker_agent.py          # Polls marketplace for jobs & drafts responses via Ollama
+│   ├── memory_store.py          # Local ChromaDB / SQLite-vec RAG interface
+│   ├── voiceprint.example.json  # Template for user tone, skills, and approval guardrails
+│   └── data/                    # Git-ignored folder for local DB & personal transcripts
+├── platform/                    # Two-sided web app (Employer + Worker portals)
+│   ├── main.py                  # FastAPI application entry point
+│   ├── models.py                # SQLAlchemy / PostgreSQL schemas (Users, Tasks, Profiles)
+│   ├── routes/
+│   │   ├── employers.py         # Task posting, VAI discovery, deliverable review
+│   │   ├── workers.py           # Approval queue, earnings, node pairing
+│   │   └── bridge_api.py        # Secure HTTPS polling endpoints for local VAI nodes
+│   └── templates/               # Accessible HTML + HTMX + Tailwind UI
+│       ├── base.html
+│       ├── employer_dashboard.html
+│       └── worker_dashboard.html
+├── docs/
+│   ├── ARCHITECTURE.md          # Detailed system diagrams & security model
+│   └── ACCESSIBILITY.md         # Guidelines for voice, switch, and low-energy UX
+├── .env.example                 # Template for Neon Postgres & API keys
+├── .gitignore                   # Ensures local voiceprint data is never pushed to Git
+├── requirements.txt             # Unified Python dependencies
+└── README.md                    # Project overview, mission, and quickstart
+
+
+
+
+INITIAL README
+
+# Voiceprint AI (VAI)
+
+**Decentralized, user-owned AI workers empowering disabled individuals to earn independent income.**
+
+---
+
+## The Human Mission
+
+Traditional workplaces and gig platforms often exclude severely disabled individuals due to rigid schedules, physical demands, or real-time communication barriers—even when those individuals possess deep domain knowledge, creativity, and sharp judgment.
+
+**Voiceprint AI (VAI)** flips the traditional AI labor model. Instead of corporations replacing workers with generic bots, VAI enables individuals to train their own **personal, local-first AI representative** through accessible, self-paced interviews. 
+
+* **True Ownership:** Your "Voiceprint" (knowledge, style, and decision boundaries) lives on your hardware—not locked inside a corporate black box.
+* **Accessible Workflows:** Workers train their AI at their own pace using voice, switch access, or text, and review deliverables asynchronously with one-click approvals.
+* **Direct Economic Agency:** Employers hire verified VAI representatives for scoped tasks, and 100% of the worker's earnings go directly to the human behind the model.
+
+---
+
+## How It Works (MVP Architecture)
+
+VAI splits the system into two decoupled halves connected by a secure polling bridge:
+
+1. **The Local VAI Node (`local_node/`):** Runs on the worker's machine via **Ollama**. A guided **Interviewer Agent** captures the user's expertise into a local vector store (**ChromaDB** / **SQLite-vec**). A background worker polls for assigned jobs and drafts responses using the user's unique voiceprint.
+2. **The Two-Sided Platform (`platform/`):** A lightweight **FastAPI + PostgreSQL** web app featuring an **Employer Portal** (to browse VAI profiles and post tasks) and a **Worker Control Dashboard** (to approve drafts before delivery).
+
+```text
+[Disabled Worker] 
+   │  (Self-paced guided interview)
+   ▼
+[Local VAI Node (Ollama + Local RAG)] 
+   │  (Polls for jobs & submits human-approved drafts)
+   ▼
+[VAI Web Platform (FastAPI + Postgres)]
+   ▲  (Posts tasks, reviews work, pays worker)
+   │
+[Employer]
+```
+
+---
+
+## Tech Stack
+
+* **Local AI Runtime:** Python, Ollama (Llama 3 / Mistral)
+* **Personal Memory:** ChromaDB / SQLite-vec
+* **Platform Backend:** FastAPI, SQLAlchemy, PostgreSQL
+* **Frontend:** Accessible HTML/CSS, HTMX, Tailwind CSS
+
+---
+
+## Quickstart (Run Locally in 10 Minutes)
+
+### Prerequisites
+* Python 3.10+
+* [Ollama](https://ollama.com) installed locally (`ollama pull llama3.1`)
+
+### 1. Clone & Install
+```bash
+git clone https://github.com
+cd voiceprint-ai
+python -m venv venv
+source venv/bin/activate  # On Windows: venv\Scripts\activate
+pip install -r requirements.txt
+```
+
+### 2. Configure Environment
+```bash
+cp .env.example .env
+cp local_node/voiceprint.example.json local_node/voiceprint.json
+```
+
+### 3. Run Your First Training Interview
+```bash
+python local_node/interviewer.py
+```
+
+### 4. Start the Marketplace Platform
+```bash
+uvicorn platform.main:app --reload
+```
+Visit `http://127.0.0.1:8000` to explore both the **Employer** and **Worker** views.
+
+---
+
+## Where We Need Contributors
+
+We are actively looking for developers, designers, and accessibility advocates to help build the MVP:
+* **AI / RAG Engineers:** Improve the adaptive interview prompt pipeline so VAI captures nuanced expertise without exhausting the user.
+* **Accessibility & Frontend Devs:** Build zero-friction, screen-reader-first UI components and voice/switch-friendly approval workflows.
+* **Backend & Security Engineers:** Harden the local-to-cloud polling bridge and task escrow lifecycle.
+
+Check out `docs/ARCHITECTURE.md` or open an issue to jump in!
+
+---
+
+## License
+Apache 2.0
