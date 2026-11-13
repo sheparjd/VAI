@@ -75,11 +75,10 @@ python local_node/interviewer.py
 
 ### 4. Start the Marketplace Platform
 ```bash
-uvicorn web_platform.main:app --reload
+python -m uvicorn web_platform.main:app --reload --port 8080
 ```
-Visit `http://127.0.0.1:8000` to explore both the **Employer** and **Worker** views.
+Visit `http://127.0.0.1:8080` to explore both the **Employer** and **Worker** views.
 
-May require using port 8080, including in reload above i.e. add -- port 8080 after reload then visit there instead of 8000
 
 ---
 

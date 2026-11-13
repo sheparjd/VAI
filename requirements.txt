@@ -13,4 +13,3 @@ python-dotenv>=1.0.1
 # Local AI & Personal Memory (RAG)
 ollama>=0.3.3
 chromadb>=0.5.15
-httpx>=0.27.2

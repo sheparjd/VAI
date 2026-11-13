@@ -1,6 +1,7 @@
+import http.client
 import json
 import os
-from datetime import datetime
+import time
 from pathlib import Path
 import ollama
 
@@ -8,7 +9,10 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 VOICEPRINT_PATH = BASE_DIR / "voiceprint.json"
 TRANSCRIPT_PATH = DATA_DIR / "interview_transcript.json"
-DRAFTS_DIR = DATA_DIR / "drafts"
+
+PLATFORM_HOST = "127.0.0.1"
+PLATFORM_PORT = 8080
+POLL_INTERVAL_SECONDS = 5
 
 
 def get_available_model() -> str | None:
@@ -47,7 +51,7 @@ def load_voiceprint() -> dict | None:
 
 
 def load_interview_examples() -> str:
-    """Load past Q&A answers as lightweight few-shot memory until ChromaDB is wired up."""
+    """Load past Q&A answers as lightweight few-shot memory."""
     if not TRANSCRIPT_PATH.exists():
         return ""
 
@@ -83,7 +87,6 @@ def evaluate_and_draft_task(task: dict, voiceprint: dict, examples: str, model: 
         "{\n"
         '  "decision": "ACCEPT" or "DECLINE",\n'
         '  "reason": "Brief explanation of why this matches or violates the worker\'s boundaries",\n'
-        '  "confidence": "HIGH" or "LOW",\n'
         '  "draft_deliverable": "Your complete drafted response written in the worker\'s authentic style (or empty string if DECLINE)"\n'
         "}"
     )
@@ -91,8 +94,7 @@ def evaluate_and_draft_task(task: dict, voiceprint: dict, examples: str, model: 
     user_prompt = (
         f"Incoming Employer Task:\n"
         f"Title: {task['title']}\n"
-        f"Description: {task['description']}\n"
-        f"Requirements: {task.get('requirements', 'None specified')}"
+        f"Description: {task['description']}"
     )
 
     response = ollama.chat(
@@ -108,43 +110,36 @@ def evaluate_and_draft_task(task: dict, voiceprint: dict, examples: str, model: 
     return json.loads(raw_json)
 
 
-def human_review_gate(task: dict, result: dict, voiceprint: dict):
-    """Pause execution and let the human worker approve, edit, or reject the AI's draft."""
-    DRAFTS_DIR.mkdir(parents=True, exist_ok=True)
-    require_approval = (
-        voiceprint.get("boundaries_and_guardrails", {})
-        .get("require_human_approval", {})
-        .get("before_submitting_final_deliverable", True)
-    )
-
-    print("\n" + "-" * 60)
-    print(f"TASK: {task['title']}")
-    print(f"VAI Decision: {result.get('decision')} (Confidence: {result.get('confidence')})")
-    print(f"Reasoning: {result.get('reason')}")
-    print("-" * 60)
-
-    if result.get("decision") == "DECLINE":
-        print("VAI automatically declined this task based on your personal boundaries.")
-        return
-
-    print("\n--- DRAFTED DELIVERABLE ---\n")
-    print(result.get("draft_deliverable", ""))
-    print("\n---------------------------\n")
-
-    if require_approval:
-        choice = input("Human Approval Gate — [A]pprove & save, [R]eject draft, or [S]kip? ").strip().lower()
-        if choice == "a":
-            filename = f"approved_{task['id']}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
-            out_path = DRAFTS_DIR / filename
-            with open(out_path, "w", encoding="utf-8") as f:
-                json.dump({"task": task, "result": result, "status": "APPROVED_BY_HUMAN"}, f, indent=2)
-            print(f"Approved! Deliverable saved to: {out_path}")
-        else:
-            print("Draft rejected or skipped. Nothing was sent.")
+def fetch_open_tasks() -> list[dict]:
+    """Poll /api/bridge/tasks directly via http.client."""
+    conn = http.client.HTTPConnection(PLATFORM_HOST, PLATFORM_PORT, timeout=10)
+    try:
+        conn.request("GET", "/api/bridge/tasks")
+        resp = conn.getresponse()
+        body = resp.read().decode("utf-8")
+        if resp.status != 200:
+            raise RuntimeError(f"HTTP {resp.status}: {body}")
+        return json.loads(body)
+    finally:
+        conn.close()
 
 
-def run_local_simulation():
-    """Test the local worker agent against sample marketplace tasks."""
+def submit_draft(payload: dict) -> None:
+    """Post AI draft to /api/bridge/submit directly via http.client."""
+    conn = http.client.HTTPConnection(PLATFORM_HOST, PLATFORM_PORT, timeout=10)
+    try:
+        headers = {"Content-Type": "application/json"}
+        conn.request("POST", "/api/bridge/submit", body=json.dumps(payload), headers=headers)
+        resp = conn.getresponse()
+        body = resp.read().decode("utf-8")
+        if resp.status != 200:
+            raise RuntimeError(f"HTTP {resp.status}: {body}")
+    finally:
+        conn.close()
+
+
+def run_bridge_loop():
+    """Continuously poll the web platform for new tasks and submit AI drafts."""
     model = get_available_model()
     if not model:
         return
@@ -154,31 +149,40 @@ def run_local_simulation():
         return
 
     examples = load_interview_examples()
+    worker_name = voiceprint.get("worker_profile", {}).get("display_name", "Worker")
 
-    # Sample tasks to test both normal work and boundary enforcement
-    sample_tasks = [
-        {
-            "id": "task_001",
-            "title": "Summarize a 3-step customer onboarding workflow",
-            "description": "Write a clear, structured guide explaining how a new user creates an account, connects their email, and runs their first report.",
-            "requirements": "Keep it concise and easy to read."
-        },
-        {
-            "id": "task_002",
-            "title": "Live Zoom Sales Representative",
-            "description": "Join live video calls with prospective clients for 4 hours a day to pitch software.",
-            "requirements": "Must be on camera and respond in real time."
-        }
-    ]
+    print("\n" + "=" * 60)
+    print(f"VAI Local Node Online | Profile: {worker_name} | Model: {model}")
+    print(f"Polling marketplace at: http://{PLATFORM_HOST}:{PLATFORM_PORT}/api/bridge")
+    print("Press Ctrl+C to pause your local VAI node anytime.")
+    print("=" * 60 + "\n")
 
-    print(f"\nVoiceprint AI Worker Agent active (Model: {model})")
-    print(f"Loaded profile for: {voiceprint.get('worker_profile', {}).get('display_name', 'Worker')}")
+    while True:
+        try:
+            open_tasks = fetch_open_tasks()
 
-    for task in sample_tasks:
-        print(f"\nEvaluating incoming task '{task['title']}'...")
-        result = evaluate_and_draft_task(task, voiceprint, examples, model)
-        human_review_gate(task, result, voiceprint)
+            for task in open_tasks:
+                print(f"[New Task #{task['id']}] '{task['title']}' — Evaluating against guardrails...")
+                result = evaluate_and_draft_task(task, voiceprint, examples, model)
+
+                payload = {
+                    "task_id": task["id"],
+                    "decision": result.get("decision", "ACCEPT"),
+                    "reason": result.get("reason", ""),
+                    "draft_deliverable": result.get("draft_deliverable", "")
+                }
+
+                submit_draft(payload)
+                print(f" -> Submitted to Worker Dashboard (Decision: {payload['decision']})\n")
+
+        except KeyboardInterrupt:
+            print("\nLocal VAI node paused. Goodbye!")
+            break
+        except Exception as e:
+            print(f"[Waiting] Web platform unreachable ({e}). Retrying in {POLL_INTERVAL_SECONDS}s...")
+
+        time.sleep(POLL_INTERVAL_SECONDS)
 
 
 if __name__ == "__main__":
-    run_local_simulation()
+    run_bridge_loop()
