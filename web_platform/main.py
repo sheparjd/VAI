@@ -74,8 +74,9 @@ def employer_portal(db: Session = Depends(get_db)):
         <div class="card">
             <h3>{w.display_name} — <span style="font-weight:normal; color:#475569;">{w.headline}</span></h3>
             <p>{w.bio_summary}</p>
-            <p><strong>Domains:</strong> {w.domains}<br>
-            <strong>Guardrails:</strong> {w.boundaries}</p>
+            <p><strong>Total Earned: </strong>{w.total_earned}</p>
+            <p><strong>Domains:</strong> {w.domains}</p>
+            <p><strong>Guardrails:</strong> {w.boundaries}</p>
         </div>
         """
         for w in workers
