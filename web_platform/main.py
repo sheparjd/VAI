@@ -138,6 +138,7 @@ def create_task(
 @app.get("/worker", response_class=HTMLResponse)
 def worker_portal(db: Session = Depends(get_db)):
     worker = db.query(WorkerProfile).first()
+    #worker2 = db.query(WorkerProfile).second()
     tasks = db.query(MarketplaceTask).order_by(MarketplaceTask.id.desc()).all()
 
     task_items = ""

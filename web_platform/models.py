@@ -1,5 +1,7 @@
+import json
 import os
 from datetime import datetime
+from pathlib import Path
 from sqlalchemy import create_engine, Column, Integer, String, Text, DateTime, Float
 from sqlalchemy.orm import declarative_base, sessionmaker
 
@@ -41,15 +43,35 @@ def init_db():
     """Create tables and seed a demo VAI profile if empty."""
     Base.metadata.create_all(bind=engine)
     db = SessionLocal()
+    db.query(WorkerProfile).delete()  # Clear existing profiles for demo purposes
     if db.query(WorkerProfile).count() == 0:
+        file_path = Path(__file__).resolve().parents[1] / "local_node" / "voiceprint.json"
+        with open(file_path, "r", encoding="utf-8") as file:
+            profile_data = json.load(file)
         demo_worker = WorkerProfile(
-            display_name="Alex M. (VAI Node #01)",
-            headline="Technical Writer & Root Cause Analyst",
-            bio_summary="Trains a local Voiceprint AI to break down complex IT workflows into clear, structured guides.",
-            domains="Technical Documentation, Data Cleanup, Process Troubleshooting",
-            boundaries="No real-time video/phone calls; Human approval required before delivery",
+            display_name=profile_data["worker_profile"]["display_name"],
+            headline=profile_data["worker_profile"]["headline"],
+            bio_summary=profile_data["worker_profile"]["bio_summary"],
+            #boundaries=profile_data["boundaries_and_guardrails"]["never_accept_tasks_involving"],
             total_earned=0.0
         )
+        
+        # Point to the JSON file in the same directory as this Python script
+        #file_path = Path(__file__).parent / "worker_profile.json"
+
+        # Read the file straight into a dictionary variable
+        #with open(file_path, "r", encoding="utf-8") as file:
+        #    profile_data = json.load(file)
+        #VAI_worker = WorkerProfile(
+        #    display_name=profile_data["display_name"],
+        #    headline=profile_data["headline"],
+        #    bio_summary=profile_data["bio_summary"],
+        #    domains=profile_data["domains"],
+        #    boundaries=profile_data["boundaries_and_guardrails"],
+        #    total_earned=0.0
+        #)  
+         
         db.add(demo_worker)
+        #db.add(VAI_worker)
         db.commit()
     db.close()
