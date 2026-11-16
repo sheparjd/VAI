@@ -6,14 +6,17 @@ from pathlib import Path
 from urllib.parse import urlparse
 import ollama
 
+import feedback
+
 BASE_DIR = Path(__file__).resolve().parent
-DATA_DIR = BASE_DIR / "data"
+DATA_DIR = Path(os.getenv("VAI_DATA_DIR") or BASE_DIR / "data")
 VOICEPRINT_PATH = BASE_DIR / "voiceprint.json"
 TRANSCRIPT_PATH = DATA_DIR / "interview_transcript.json"
 
 _platform = urlparse(os.getenv("PLATFORM_API_URL", "http://127.0.0.1:8080"))
 PLATFORM_HOST = _platform.hostname or "127.0.0.1"
 PLATFORM_PORT = _platform.port or 8080
+PLATFORM_ID = f"http://{PLATFORM_HOST}:{PLATFORM_PORT}"  # tags local records by platform
 POLL_INTERVAL_SECONDS = 5
 # After this many failed AI attempts on one task, stop retrying it until the
 # node restarts, so one bad task can't block the rest of the queue.
@@ -139,11 +142,15 @@ def evaluate_and_draft_task(task: dict, voiceprint: dict, examples: str, model: 
     }
 
 
-def fetch_open_tasks() -> list[dict]:
-    """Poll /api/bridge/tasks directly via http.client."""
+def _bridge_request(method: str, path: str, payload: dict | None = None):
+    """Call the platform's bridge API directly via http.client; returns parsed JSON."""
     conn = http.client.HTTPConnection(PLATFORM_HOST, PLATFORM_PORT, timeout=10)
     try:
-        conn.request("GET", "/api/bridge/tasks")
+        if payload is None:
+            conn.request(method, path)
+        else:
+            conn.request(method, path, body=json.dumps(payload),
+                         headers={"Content-Type": "application/json"})
         resp = conn.getresponse()
         body = resp.read().decode("utf-8")
         if resp.status != 200:
@@ -153,18 +160,64 @@ def fetch_open_tasks() -> list[dict]:
         conn.close()
 
 
-def submit_draft(payload: dict) -> None:
-    """Post AI draft to /api/bridge/submit directly via http.client."""
-    conn = http.client.HTTPConnection(PLATFORM_HOST, PLATFORM_PORT, timeout=10)
+def fetch_open_tasks() -> list[dict]:
+    """Poll /api/bridge/tasks for OPEN tasks."""
+    return _bridge_request("GET", "/api/bridge/tasks")
+
+
+def submit_draft(payload: dict) -> dict:
+    """Post an AI draft to /api/bridge/submit. Returns the platform's response."""
+    return _bridge_request("POST", "/api/bridge/submit", payload)
+
+
+def fetch_outcomes(task_ids: list[int]) -> list[dict]:
+    """Ask which drafted tasks the worker has since approved or declined."""
+    if not task_ids:
+        return []
+    return _bridge_request("GET", "/api/bridge/outcomes?ids=" + ",".join(map(str, task_ids)))
+
+
+def open_memory_store():
+    """Open the local RAG memory, or return None to fall back to the plain transcript."""
     try:
-        headers = {"Content-Type": "application/json"}
-        conn.request("POST", "/api/bridge/submit", body=json.dumps(payload), headers=headers)
-        resp = conn.getresponse()
-        body = resp.read().decode("utf-8")
-        if resp.status != 200:
-            raise RuntimeError(f"HTTP {resp.status}: {body}")
-    finally:
-        conn.close()
+        from memory_store import VoiceprintMemoryStore
+        store = VoiceprintMemoryStore()
+        stats = store.sync_all()
+        print(f"[Memory] Local memory ready: {stats['interview']} interview answers, "
+              f"{stats['knowledge']} document chunks, {stats['reviewed_work']} reviewed tasks "
+              f"({stats['added']} newly indexed).")
+        return store
+    except Exception as e:
+        print(f"[Memory] Local memory unavailable ({e}).")
+        print("[Memory] Falling back to the full interview transcript in every prompt.")
+        return None
+
+
+def learn_from_outcomes(memory) -> None:
+    """Record how the worker handled earlier drafts, and add them to local memory."""
+    pending = feedback.pending_drafts(PLATFORM_ID)
+    if not pending:
+        return
+    learned = 0
+    for outcome in fetch_outcomes(list(pending)):
+        draft = pending.get(outcome["id"])
+        if not draft:
+            continue
+        if outcome["title"] != draft["title"]:
+            # Task id now belongs to a different task (e.g. platform DB was reset).
+            feedback.discard_draft(draft, "task id reused by a different task")
+            continue
+        rec = feedback.record_outcome(draft, outcome)
+        learned += 1
+        if rec["outcome"] == "APPROVED" and not rec["edited"]:
+            note = "approved unchanged"
+        elif rec["outcome"] == "APPROVED":
+            note = f"approved with edits ({rec['similarity']:.0%} similar to the AI draft)"
+        else:
+            note = "declined by you"
+        print(f"[Learned] Task #{rec['task_id']} '{rec['title']}': {note}.")
+    if learned and memory:
+        memory.sync_all()
 
 
 def run_bridge_loop():
@@ -177,14 +230,16 @@ def run_bridge_loop():
     if not voiceprint:
         return
 
-    examples = load_interview_examples()
     worker_name = voiceprint.get("worker_profile", {}).get("display_name", "Worker")
 
     print("\n" + "=" * 60)
     print(f"VAI Local Node Online | Profile: {worker_name} | Model: {model}")
-    print(f"Polling marketplace at: http://{PLATFORM_HOST}:{PLATFORM_PORT}/api/bridge")
+    print(f"Polling marketplace at: {PLATFORM_ID}/api/bridge")
     print("Press Ctrl+C to pause your local VAI node anytime.")
     print("=" * 60 + "\n")
+
+    memory = open_memory_store()
+    transcript_examples = None if memory else load_interview_examples()
 
     failures: dict[int, int] = {}  # task id -> failed AI attempts
 
@@ -197,6 +252,11 @@ def run_bridge_loop():
                 time.sleep(POLL_INTERVAL_SECONDS)
                 continue
 
+            try:
+                learn_from_outcomes(memory)
+            except Exception as e:
+                print(f"[Memory] Could not record review outcomes yet ({e}).")
+
             for task in open_tasks:
                 task_id = task["id"]
                 if failures.get(task_id, 0) >= MAX_ATTEMPTS_PER_TASK:
@@ -204,6 +264,10 @@ def run_bridge_loop():
 
                 print(f"[New Task #{task_id}] '{task['title']}' — Evaluating against guardrails...")
                 try:
+                    if memory:
+                        examples = memory.query_memory(f"{task['title']}\n{task['description']}")
+                    else:
+                        examples = transcript_examples
                     result = evaluate_and_draft_task(task, voiceprint, examples, model)
                 except Exception as e:
                     failures[task_id] = failures.get(task_id, 0) + 1
@@ -215,11 +279,16 @@ def run_bridge_loop():
                     continue
 
                 try:
-                    submit_draft({"task_id": task_id, **result})
+                    response = submit_draft({"task_id": task_id, **result})
                 except Exception as e:
                     print(f" -> [Waiting] Could not submit task #{task_id} ({e}). Will retry.\n")
                     break  # platform likely down; re-poll after the sleep
                 failures.pop(task_id, None)
+                if response.get("status") == "ignored":
+                    print(f" -> Task #{task_id} was already handled on the dashboard; draft not used.\n")
+                    continue
+                if result["decision"] == "ACCEPT":
+                    feedback.record_draft(task, result, model, PLATFORM_ID)
                 print(f" -> Submitted to Worker Dashboard (Decision: {result['decision']})\n")
 
             time.sleep(POLL_INTERVAL_SECONDS)

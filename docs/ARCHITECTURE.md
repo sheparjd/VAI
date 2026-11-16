@@ -41,9 +41,12 @@ The system is split into two independent components connected via an outbound HT
 ## 3. Component Breakdown
 
 ### A. Local VAI Node (`local_node/`)
-* **`interviewer.py` (Training Pipeline):** Conducts a self-paced, one-question-at-a-time interview via local Ollama models. Saves raw answers to `data/interview_transcript.json` and synthesizes a structured `voiceprint.json` configuration.
-* **`memory_store.py` (Personal RAG):** Uses a persistent local **ChromaDB** instance (`data/chroma_db/`) to index interview Q&As alongside optional `.txt` and `.md` reference documents in `data/knowledge/`.
-* **`worker_agent.py` (Autonomous Drafter):** Polls the marketplace for `OPEN` tasks, evaluates each task against `never_accept_tasks_involving` rules in `voiceprint.json`, retrieves relevant context, and drafts deliverables in the worker's authentic voice.
+* **`interviewer.py` (Training Pipeline):** Conducts a self-paced, one-question-at-a-time interview via local Ollama models. Each answer is saved to `data/interview_transcript.json` as it's given, so sessions can be paused and resumed. Synthesizes a structured `voiceprint.json` configuration, backing up the previous one to `data/backups/`.
+* **`memory_store.py` (Personal RAG):** Uses a persistent local **ChromaDB** instance (`data/chroma_db/`, telemetry disabled) with embeddings from a small local Ollama model (`nomic-embed-text` by default, override with `VAI_EMBED_MODEL`). Indexes interview Q&As, `.txt`/`.md` documents in `data/knowledge/`, and reviewed work from `data/corrections.jsonl`. Entries are keyed by content hash, so a sync only embeds new or changed text.
+* **`feedback.py` (Learning from Review):** Keeps a local record of every draft the node submits (`data/drafts.jsonl`) and how the worker resolved it (`data/corrections.jsonl`: approved unchanged, approved with edits plus a similarity score, or declined). The platform only stores final deliverables; the AI-draft-versus-final comparison never leaves the worker's machine.
+* **`worker_agent.py` (Autonomous Drafter):** Polls the marketplace for `OPEN` tasks, evaluates each task against `never_accept_tasks_involving` rules in `voiceprint.json`, retrieves the most relevant memory for that task from `memory_store.py`, and drafts deliverables in the worker's authentic voice. Each poll also checks `/api/bridge/outcomes` for drafts the worker has since reviewed, and records them via `feedback.py`.
+
+All local data lives under `local_node/data/` (git-ignored); set `VAI_DATA_DIR` to use a different folder.
 
 ### B. Two-Sided Web Platform (`web_platform/`)
 * **`models.py` (Data Layer):** Defines `WorkerProfile` (public skills, boundaries, earnings) and `MarketplaceTask` (job lifecycle states). Defaults to SQLite for zero-config local demos and supports PostgreSQL via `DATABASE_URL`.
@@ -75,6 +78,7 @@ To ensure reliable execution across consumer Windows, macOS, and Linux environme
 
 ## 6. Roadmap for Contributors
 
-* **Vector Retrieval Integration:** Wire `VoiceprintMemoryStore.query_memory()` directly into `worker_agent.py`'s prompt builder.
+* **Competence Boundaries:** Let the node decline tasks that fall outside the worker's expertise, not just their ethical guardrails.
+* **Deeper Interviews:** Adaptive, multi-session interview modules based on cognitive task analysis (critical decision method, knowledge audits).
 * **Authentication & Node Pairing:** Add cryptographic API tokens so each local VAI node authenticates securely with its corresponding `WorkerProfile`.
 * **Escrow & Direct Payouts:** Integrate Stripe Connect Express accounts for automated employer-to-worker disbursements upon task approval.

@@ -82,9 +82,14 @@ Visit `http://127.0.0.1:8080` to explore both the **Employer** and **Worker** vi
 ### 5. Start Your Local VAI Node
 In a second terminal (with Ollama running):
 ```bash
+ollama pull nomic-embed-text   # small (~274 MB) local embedding model for your personal memory
 python local_node/worker_agent.py
 ```
 The node polls the platform for open tasks, drafts each one with your local Ollama model, and sends the draft to your Worker dashboard for approval. Without it, tasks stay `OPEN` and nothing is drafted. Set `OLLAMA_MODEL` to choose a model, and `PLATFORM_API_URL` if the platform isn't at `http://127.0.0.1:8080`.
+
+For each task, the node looks up the most relevant parts of your **personal memory**: your interview answers, any `.txt`/`.md` files you put in `local_node/data/knowledge/`, and work you've previously approved. It learns from your reviews: when you approve a draft (edited or not) or decline it, the node records the outcome locally in `local_node/data/corrections.jsonl` and adds your final answer to its memory. All of this stays on your machine. If the embedding model isn't installed, the node falls back to using your interview transcript alone.
+
+The interview can be paused and resumed: answers are saved as you go, and running `python local_node/interviewer.py` again picks up where you left off.
 
 
 ---

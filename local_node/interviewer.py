@@ -7,7 +7,7 @@ import ollama
 # Configuration
 MODEL_NAME = os.getenv("OLLAMA_MODEL", "llama3.1")
 BASE_DIR = Path(__file__).resolve().parent
-DATA_DIR = BASE_DIR / "data"
+DATA_DIR = Path(os.getenv("VAI_DATA_DIR") or BASE_DIR / "data")
 TRANSCRIPT_PATH = DATA_DIR / "interview_transcript.json"
 VOICEPRINT_PATH = BASE_DIR / "voiceprint.json"
 
@@ -33,28 +33,85 @@ def check_ollama_ready(model: str) -> bool:
         return False
 
 
-def run_interview() -> list[dict]:
-    """Conduct a self-paced, one-question-at-a-time interview."""
+def _timestamp() -> str:
+    return datetime.now().strftime("%Y%m%d-%H%M%S")
+
+
+def load_transcript() -> list[dict]:
+    """Load answers from earlier sessions (empty list if none)."""
+    if not TRANSCRIPT_PATH.exists():
+        return []
+    with open(TRANSCRIPT_PATH, "r", encoding="utf-8") as f:
+        return json.load(f) or []
+
+
+def save_transcript(transcript: list[dict]) -> None:
+    """Write the transcript safely: a crash mid-write can't corrupt earlier answers."""
     DATA_DIR.mkdir(parents=True, exist_ok=True)
-    transcript = []
+    tmp_path = TRANSCRIPT_PATH.with_suffix(".tmp")
+    with open(tmp_path, "w", encoding="utf-8") as f:
+        json.dump(transcript, f, indent=2, ensure_ascii=False)
+    os.replace(tmp_path, TRANSCRIPT_PATH)
+
+
+def backup_file(path: Path) -> Path | None:
+    """Copy a file into data/backups/ before it's replaced. Returns the backup path."""
+    if not path.exists():
+        return None
+    backup_dir = DATA_DIR / "backups"
+    backup_dir.mkdir(parents=True, exist_ok=True)
+    backup = backup_dir / f"{path.stem}.{_timestamp()}{path.suffix}"
+    backup.write_bytes(path.read_bytes())
+    return backup
+
+
+def run_interview() -> tuple[list[dict], bool]:
+    """Conduct a self-paced, one-question-at-a-time interview that can be resumed.
+
+    Each answer is saved the moment it's given. Questions answered in earlier
+    sessions are skipped; skipped questions are asked again next time.
+    Returns the full transcript and whether it changed in this session.
+    """
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
+    transcript = load_transcript()
+    changed = False
 
     print("\n" + "=" * 60)
     print("🎙️  Voiceprint AI (VAI) — Local Training Interview")
     print("=" * 60)
     print("Take your time. There is no rush.")
-    print("Type 'skip' to skip a question, or 'quit' to save and exit anytime.\n")
+    print("Type 'skip' to skip a question, or 'quit' to stop. Every answer is saved as you go.\n")
 
-    for idx, question in enumerate(INTERVIEW_QUESTIONS, start=1):
+    answered = {item["question"] for item in transcript}
+    if transcript:
+        done = sum(q in answered for q in INTERVIEW_QUESTIONS)
+        print(f"Welcome back. You've answered {done} of {len(INTERVIEW_QUESTIONS)} questions so far.")
+        choice = input("Press Enter to continue where you left off, or type 'restart' to start over: ").strip().lower()
+        if choice == "restart":
+            backup = backup_file(TRANSCRIPT_PATH)
+            transcript, answered = [], set()
+            save_transcript(transcript)
+            changed = True
+            print(f"Starting over. Your previous answers were backed up to: {backup}\n")
+        else:
+            print()
+
+    remaining = [q for q in INTERVIEW_QUESTIONS if q not in answered]
+    if not remaining:
+        print("You've already answered every question. Nothing left to ask.\n")
+
+    for question in remaining:
+        idx = INTERVIEW_QUESTIONS.index(question) + 1
         print(f"Question {idx} of {len(INTERVIEW_QUESTIONS)}:")
         print(f"🤖 VAI: {question}")
 
         answer = input("🧑 You: ").strip()
 
         if answer.lower() == "quit":
-            print("\nSaving progress and stopping early. You can resume anytime.")
+            print("\nStopping here. Your answers are saved; run this again anytime to continue.")
             break
         if answer.lower() == "skip" or not answer:
-            print("⏭️  Skipped.\n")
+            print("⏭️  Skipped. I'll ask this one again next time.\n")
             continue
 
         transcript.append({
@@ -62,12 +119,11 @@ def run_interview() -> list[dict]:
             "answer": answer,
             "timestamp": datetime.now().isoformat()
         })
+        save_transcript(transcript)
+        changed = True
         print("✅ Saved.\n")
 
-    with open(TRANSCRIPT_PATH, "w", encoding="utf-8") as f:
-        json.dump(transcript, f, indent=2)
-
-    return transcript
+    return transcript, changed
 
 
 def synthesize_voiceprint(transcript: list[dict], model: str) -> dict:
@@ -114,18 +170,25 @@ def main():
     if not check_ollama_ready(MODEL_NAME):
         return
 
-    transcript = run_interview()
+    transcript, changed = run_interview()
 
     if not transcript:
         print("No answers recorded. Exiting without generating voiceprint.json.")
         return
+    if not changed and VOICEPRINT_PATH.exists():
+        print("No new answers this session, so your existing voiceprint.json was left as is.")
+        return
 
     try:
         voiceprint_data = synthesize_voiceprint(transcript, MODEL_NAME)
+        # Keep any hand edits the worker made to the previous profile.
+        backup = backup_file(VOICEPRINT_PATH)
         with open(VOICEPRINT_PATH, "w", encoding="utf-8") as f:
-            json.dump(voiceprint_data, f, indent=2)
+            json.dump(voiceprint_data, f, indent=2, ensure_ascii=False)
 
         print(f"\n🎉 Success! Your personal profile is saved to: {VOICEPRINT_PATH}")
+        if backup:
+            print(f"Your previous profile was backed up to: {backup}")
         print("Review or edit this JSON file anytime—you are always in control.")
     except Exception as e:
         print(f"\n[Error] Failed to generate JSON profile: {e}")

@@ -257,6 +257,28 @@ def poll_open_tasks(db: Session = Depends(get_db)):
     return [{"id": t.id, "title": t.title, "description": t.description} for t in tasks]
 
 
+@app.get("/api/bridge/outcomes")
+def task_outcomes(ids: str = "", db: Session = Depends(get_db)):
+    """Local worker_agent.py asks how the worker resolved tasks it drafted,
+    so it can learn from edits locally. Returns only finished tasks."""
+    try:
+        task_ids = [int(i) for i in ids.split(",") if i.strip()][:200]
+    except ValueError:
+        return []
+    if not task_ids:
+        return []
+    tasks = (
+        db.query(MarketplaceTask)
+        .filter(MarketplaceTask.id.in_(task_ids), MarketplaceTask.status.in_(("APPROVED", "DECLINED")))
+        .all()
+    )
+    return [
+        {"id": t.id, "title": t.title, "status": t.status,
+         "final_output": t.draft_output if t.status == "APPROVED" else ""}
+        for t in tasks
+    ]
+
+
 @app.post("/api/bridge/submit")
 def submit_local_draft(payload: DraftSubmission, db: Session = Depends(get_db)):
     """Local worker_agent.py posts its Ollama-generated draft here for human sign-off."""
