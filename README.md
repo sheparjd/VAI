@@ -79,6 +79,13 @@ python -m uvicorn web_platform.main:app --reload --port 8080
 ```
 Visit `http://127.0.0.1:8080` to explore both the **Employer** and **Worker** views.
 
+### 5. Start Your Local VAI Node
+In a second terminal (with Ollama running):
+```bash
+python local_node/worker_agent.py
+```
+The node polls the platform for open tasks, drafts each one with your local Ollama model, and sends the draft to your Worker dashboard for approval. Without it, tasks stay `OPEN` and nothing is drafted. Set `OLLAMA_MODEL` to choose a model, and `PLATFORM_API_URL` if the platform isn't at `http://127.0.0.1:8080`.
+
 
 ---
 

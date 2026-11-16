@@ -3,6 +3,7 @@ import json
 import os
 import time
 from pathlib import Path
+from urllib.parse import urlparse
 import ollama
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -10,9 +11,17 @@ DATA_DIR = BASE_DIR / "data"
 VOICEPRINT_PATH = BASE_DIR / "voiceprint.json"
 TRANSCRIPT_PATH = DATA_DIR / "interview_transcript.json"
 
-PLATFORM_HOST = "127.0.0.1"
-PLATFORM_PORT = 8080
+_platform = urlparse(os.getenv("PLATFORM_API_URL", "http://127.0.0.1:8080"))
+PLATFORM_HOST = _platform.hostname or "127.0.0.1"
+PLATFORM_PORT = _platform.port or 8080
 POLL_INTERVAL_SECONDS = 5
+# After this many failed AI attempts on one task, stop retrying it until the
+# node restarts, so one bad task can't block the rest of the queue.
+MAX_ATTEMPTS_PER_TASK = 3
+
+
+class DraftError(Exception):
+    """The local model failed to produce a usable decision/draft."""
 
 
 def get_available_model() -> str | None:
@@ -107,7 +116,27 @@ def evaluate_and_draft_task(task: dict, voiceprint: dict, examples: str, model: 
     )
 
     raw_json = response["message"]["content"] if isinstance(response, dict) else response.message.content
-    return json.loads(raw_json)
+    try:
+        result = json.loads(raw_json)
+    except json.JSONDecodeError as e:
+        raise DraftError(f"model returned invalid JSON ({e})") from e
+    if not isinstance(result, dict):
+        raise DraftError("model returned JSON that isn't an object")
+
+    decision = str(result.get("decision", "")).strip().upper()
+    if decision not in ("ACCEPT", "DECLINE"):
+        raise DraftError(f"model returned an unknown decision: {result.get('decision')!r}")
+    draft = result.get("draft_deliverable", "")
+    if not isinstance(draft, str):
+        draft = json.dumps(draft, indent=2)
+    if decision == "ACCEPT" and not draft.strip():
+        raise DraftError("model accepted the task but returned an empty draft")
+
+    return {
+        "decision": decision,
+        "reason": str(result.get("reason", "")),
+        "draft_deliverable": draft if decision == "ACCEPT" else "",
+    }
 
 
 def fetch_open_tasks() -> list[dict]:
@@ -157,31 +186,45 @@ def run_bridge_loop():
     print("Press Ctrl+C to pause your local VAI node anytime.")
     print("=" * 60 + "\n")
 
-    while True:
-        try:
-            open_tasks = fetch_open_tasks()
+    failures: dict[int, int] = {}  # task id -> failed AI attempts
+
+    try:
+        while True:
+            try:
+                open_tasks = fetch_open_tasks()
+            except Exception as e:
+                print(f"[Waiting] Web platform unreachable ({e}). Retrying in {POLL_INTERVAL_SECONDS}s...")
+                time.sleep(POLL_INTERVAL_SECONDS)
+                continue
 
             for task in open_tasks:
-                print(f"[New Task #{task['id']}] '{task['title']}' — Evaluating against guardrails...")
-                result = evaluate_and_draft_task(task, voiceprint, examples, model)
+                task_id = task["id"]
+                if failures.get(task_id, 0) >= MAX_ATTEMPTS_PER_TASK:
+                    continue  # already gave up on this one; leave it for the worker
 
-                payload = {
-                    "task_id": task["id"],
-                    "decision": result.get("decision", "ACCEPT"),
-                    "reason": result.get("reason", ""),
-                    "draft_deliverable": result.get("draft_deliverable", "")
-                }
+                print(f"[New Task #{task_id}] '{task['title']}' — Evaluating against guardrails...")
+                try:
+                    result = evaluate_and_draft_task(task, voiceprint, examples, model)
+                except Exception as e:
+                    failures[task_id] = failures.get(task_id, 0) + 1
+                    print(f" -> [AI Error] Could not draft task #{task_id} "
+                          f"(attempt {failures[task_id]}/{MAX_ATTEMPTS_PER_TASK}): {e}")
+                    if failures[task_id] >= MAX_ATTEMPTS_PER_TASK:
+                        print(f" -> Skipping task #{task_id}. It stays OPEN for you to answer "
+                              "on the Worker dashboard.\n")
+                    continue
 
-                submit_draft(payload)
-                print(f" -> Submitted to Worker Dashboard (Decision: {payload['decision']})\n")
+                try:
+                    submit_draft({"task_id": task_id, **result})
+                except Exception as e:
+                    print(f" -> [Waiting] Could not submit task #{task_id} ({e}). Will retry.\n")
+                    break  # platform likely down; re-poll after the sleep
+                failures.pop(task_id, None)
+                print(f" -> Submitted to Worker Dashboard (Decision: {result['decision']})\n")
 
-        except KeyboardInterrupt:
-            print("\nLocal VAI node paused. Goodbye!")
-            break
-        except Exception as e:
-            print(f"[Waiting] Web platform unreachable ({e}). Retrying in {POLL_INTERVAL_SECONDS}s...")
-
-        time.sleep(POLL_INTERVAL_SECONDS)
+            time.sleep(POLL_INTERVAL_SECONDS)
+    except KeyboardInterrupt:
+        print("\nLocal VAI node paused. Goodbye!")
 
 
 if __name__ == "__main__":
