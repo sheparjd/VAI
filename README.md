@@ -93,6 +93,18 @@ Before drafting, the node checks whether each task is within your expertise, usi
 
 The interview can be paused and resumed: answers are saved as you go, and running `python local_node/interviewer.py` again picks up where you left off.
 
+### 6. Teach Your VAI How You Think (Optional, Ongoing)
+```bash
+python local_node/deep_interview.py
+```
+The basic interview captures who you are; the deeper interview captures how you think, one area of expertise at a time. It's based on cognitive task analysis, the methods researchers use to study expert judgment, and has three short modules:
+
+* **Knowledge audit** (about 10 min): what you notice that others miss, your rules of thumb, warning signs, common mistakes, and what "done well" looks like.
+* **Tough case** (about 15 min): tell one real, difficult case from your work; your local model then asks follow-up questions about that specific story.
+* **Walkthrough** (about 10 min): your local model writes a realistic sample task, and you talk through how you'd tackle it.
+
+Do as many or as few as you like, in any order, across as many sessions as you need. Every answer is saved immediately; type `skip` to skip a question for good, or `pause` to stop and resume later. Your local model may ask an optional follow-up when an answer is brief (run with `--no-followups` for shorter sessions). After each module it condenses your answers into short notes, using only your words, and you approve them before they're saved to `local_node/data/expertise_notes.json` (editable anytime). Your running VAI node picks up new answers and notes within about 5 minutes.
+
 
 ---
 

@@ -8,6 +8,8 @@ Everything stays on this machine:
 
 Memory sources:
 - data/interview_transcript.json  (interview answers)
+- data/deep_interview.json        (deeper expertise interview answers)
+- data/expertise_notes.json       (condensed notes the worker approved)
 - data/knowledge/*.txt|*.md        (the worker's own reference docs / work samples)
 - data/corrections.jsonl           (outcomes of AI drafts the worker reviewed)
 """
@@ -25,7 +27,16 @@ DATA_DIR = Path(os.getenv("VAI_DATA_DIR") or BASE_DIR / "data")
 TRANSCRIPT_PATH = DATA_DIR / "interview_transcript.json"
 KNOWLEDGE_DIR = DATA_DIR / "knowledge"
 CORRECTIONS_PATH = DATA_DIR / "corrections.jsonl"
+DEEP_INTERVIEW_PATH = DATA_DIR / "deep_interview.json"
+NOTES_PATH = DATA_DIR / "expertise_notes.json"
 CHROMA_PATH = DATA_DIR / "chroma_db"
+
+NOTE_LABELS = {
+    "rules_of_thumb": "Rules of thumb",
+    "cues_to_notice": "What to notice",
+    "common_mistakes": "Common mistakes to avoid",
+    "quality_standards": "What 'done well' looks like",
+}
 
 EMBED_MODEL = os.getenv("VAI_EMBED_MODEL", "nomic-embed-text")
 EMBED_BATCH_SIZE = 16          # keeps peak memory low on modest laptops
@@ -114,6 +125,41 @@ class VoiceprintMemoryStore:
                 )
         return entries
 
+    def _deep_interview_entries(self) -> dict:
+        """Answers from deep_interview.py, each with its area and case for context."""
+        if not DEEP_INTERVIEW_PATH.exists():
+            return {}
+        with open(DEEP_INTERVIEW_PATH, "r", encoding="utf-8") as f:
+            state = json.load(f)
+        sample_tasks = {c["id"]: c.get("sample_task") for c in state.get("cases", [])}
+        entries = {}
+        for e in state.get("entries", []):
+            if not e.get("answer"):
+                continue  # skipped question
+            header = f"Expertise area: {e['domain']}"
+            if sample_tasks.get(e.get("case_id")):
+                header += f"\nSample task: {sample_tasks[e['case_id']]}"
+            doc = f"{header}\nQuestion: {e['question']}\nWorker's answer: {e['answer']}"
+            for chunk in _split_text(doc)[:3]:
+                entries[_hash_id("deep", chunk)] = (chunk, {"source": f"deep_interview/{e['module']}"})
+        return entries
+
+    def _notes_entries(self) -> dict:
+        """Condensed expertise notes the worker approved: one entry per area and category."""
+        if not NOTES_PATH.exists():
+            return {}
+        with open(NOTES_PATH, "r", encoding="utf-8") as f:
+            notes = json.load(f)
+        entries = {}
+        for domain, categories in notes.items():
+            for cat, items in (categories or {}).items():
+                if not items:
+                    continue
+                doc = f"{domain}, {NOTE_LABELS.get(cat, cat)} (from the worker):\n" + "\n".join(f"- {i}" for i in items)
+                for chunk in _split_text(doc):
+                    entries[_hash_id("note", chunk)] = (chunk, {"source": "expertise_notes"})
+        return entries
+
     def _correction_entries(self) -> dict:
         if not CORRECTIONS_PATH.exists():
             return {}
@@ -146,6 +192,8 @@ class VoiceprintMemoryStore:
         sources = {
             "interview": self._transcript_entries(),
             "knowledge": self._knowledge_entries(),
+            "deep_interview": self._deep_interview_entries(),
+            "expertise_notes": self._notes_entries(),
             "reviewed_work": self._correction_entries(),
         }
         desired = {k: v for entries in sources.values() for k, v in entries.items()}
@@ -183,7 +231,7 @@ class VoiceprintMemoryStore:
         if not docs:
             return ""
 
-        lines = ["Relevant memory from the worker (interview answers, their documents, and work they approved):"]
+        lines = ["Relevant memory from the worker (interview answers, expertise notes, their documents, and work they approved):"]
         used = 0
         for doc, meta in zip(docs, metas):
             if used + len(doc) > MAX_CONTEXT_CHARS:

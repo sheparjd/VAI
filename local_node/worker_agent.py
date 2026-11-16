@@ -21,6 +21,7 @@ POLL_INTERVAL_SECONDS = 5
 # After this many failed AI attempts on one task, stop retrying it until the
 # node restarts, so one bad task can't block the rest of the queue.
 MAX_ATTEMPTS_PER_TASK = 3
+MEMORY_RESYNC_SECONDS = 300  # re-read interview answers, notes and documents this often
 
 
 class DraftError(Exception):
@@ -277,6 +278,7 @@ def open_memory_store():
         store = VoiceprintMemoryStore()
         stats = store.sync_all()
         print(f"[Memory] Local memory ready: {stats['interview']} interview answers, "
+              f"{stats['deep_interview']} deep-interview answers, {stats['expertise_notes']} note groups, "
               f"{stats['knowledge']} document chunks, {stats['reviewed_work']} reviewed tasks "
               f"({stats['added']} newly indexed).")
         return store
@@ -335,6 +337,7 @@ def run_bridge_loop():
     transcript_examples = None if memory else load_interview_examples()
 
     failures: dict[int, int] = {}  # task id -> failed AI attempts
+    last_sync = time.time()
 
     try:
         while True:
@@ -349,6 +352,16 @@ def run_bridge_loop():
                 learn_from_outcomes(memory)
             except Exception as e:
                 print(f"[Memory] Could not record review outcomes yet ({e}).")
+
+            # Pick up new interview answers, notes and documents without a restart.
+            if memory and time.time() - last_sync >= MEMORY_RESYNC_SECONDS:
+                last_sync = time.time()
+                try:
+                    stats = memory.sync_all()
+                    if stats["added"] or stats["removed"]:
+                        print(f"[Memory] Updated: {stats['added']} new, {stats['removed']} removed.")
+                except Exception as e:
+                    print(f"[Memory] Could not refresh memory ({e}).")
 
             for task in open_tasks:
                 task_id = task["id"]
