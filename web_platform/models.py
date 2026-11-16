@@ -21,8 +21,8 @@ class WorkerProfile(Base):
     display_name = Column(String(100), nullable=False)
     headline = Column(String(200), nullable=False)
     bio_summary = Column(Text, nullable=False)
-    domains = Column(String(300), default="General Knowledge")
-    boundaries = Column(String(300), default="No live calls")
+    domains = Column(Text, default="General Knowledge")
+    boundaries = Column(Text, default="No live calls")
     total_earned = Column(Float, default=0.0)
 
 
@@ -39,6 +39,16 @@ class MarketplaceTask(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
 
 
+def _join_list(value, fallback: str) -> str:
+    """Turn a voiceprint list (or plain string) into display text."""
+    if isinstance(value, list):
+        items = [str(v).strip() for v in value if str(v).strip()]
+        return "; ".join(items) if items else fallback
+    if isinstance(value, str) and value.strip():
+        return value.strip()
+    return fallback
+
+
 def init_db():
     """Create tables and seed a demo VAI profile if empty."""
     Base.metadata.create_all(bind=engine)
@@ -48,11 +58,17 @@ def init_db():
         file_path = Path(__file__).resolve().parents[1] / "local_node" / "voiceprint.json"
         with open(file_path, "r", encoding="utf-8") as file:
             profile_data = json.load(file)
+        profile = profile_data["worker_profile"]
+        guardrails = profile_data.get("boundaries_and_guardrails", {})
         demo_worker = WorkerProfile(
-            display_name=profile_data["worker_profile"]["display_name"],
-            headline=profile_data["worker_profile"]["headline"],
-            bio_summary=profile_data["worker_profile"]["bio_summary"],
-            #boundaries=profile_data["boundaries_and_guardrails"]["never_accept_tasks_involving"],
+            display_name=profile["display_name"],
+            headline=profile["headline"],
+            bio_summary=profile["bio_summary"],
+            domains=_join_list(profile.get("primary_domains"), "General Knowledge"),
+            boundaries=_join_list(
+                guardrails.get("never_accept_tasks_involving"),
+                "No boundaries specified",
+            ),
             total_earned=0.0
         )
         

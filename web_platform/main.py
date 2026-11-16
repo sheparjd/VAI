@@ -1,3 +1,5 @@
+from html import escape
+
 from fastapi import FastAPI, Depends, Form, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 from pydantic import BaseModel
@@ -20,6 +22,11 @@ def get_db():
         db.close()
 
 
+def h(value) -> str:
+    """Escape any user-, employer- or LLM-supplied value before putting it in HTML."""
+    return escape("" if value is None else str(value), quote=True)
+
+
 # --- Shared Accessible HTML Layout ---
 def render_page(title: str, active_tab: str, body_html: str) -> str:
     emp_style = "font-weight:bold; border-bottom:3px solid #2563eb;" if active_tab == "employer" else ""
@@ -30,7 +37,7 @@ def render_page(title: str, active_tab: str, body_html: str) -> str:
     <head>
         <meta charset="UTF-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>{title} — Voiceprint AI</title>
+        <title>{h(title)} — Voiceprint AI</title>
         <style>
             body {{ font-family: system-ui, -apple-system, sans-serif; line-height: 1.6; max-width: 900px; margin: 0 auto; padding: 20px; background: #f8fafc; color: #0f172a; }}
             header {{ display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #cbd5e1; padding-bottom: 15px; margin-bottom: 25px; }}
@@ -72,11 +79,11 @@ def employer_portal(db: Session = Depends(get_db)):
     worker_cards = "".join(
         f"""
         <div class="card">
-            <h3>{w.display_name} — <span style="font-weight:normal; color:#475569;">{w.headline}</span></h3>
-            <p>{w.bio_summary}</p>
-            <p><strong>Total Earned: </strong>{w.total_earned}</p>
-            <p><strong>Domains:</strong> {w.domains}</p>
-            <p><strong>Guardrails:</strong> {w.boundaries}</p>
+            <h3>{h(w.display_name)} — <span style="font-weight:normal; color:#475569;">{h(w.headline)}</span></h3>
+            <p>{h(w.bio_summary)}</p>
+            <p><strong>Total Earned: </strong>{h(w.total_earned)}</p>
+            <p><strong>Domains:</strong> {h(w.domains)}</p>
+            <p><strong>Guardrails:</strong> {h(w.boundaries)}</p>
         </div>
         """
         for w in workers
@@ -85,11 +92,11 @@ def employer_portal(db: Session = Depends(get_db)):
     task_cards = "".join(
         f"""
         <div class="card">
-            <span class="badge {'badge-approved' if t.status == 'APPROVED' else 'badge-open'}">{t.status}</span>
+            <span class="badge {'badge-approved' if t.status == 'APPROVED' else 'badge-open'}">{h(t.status)}</span>
             <strong style="float:right;">Payout: ${t.payout_amount:.2f}</strong>
-            <h3>{t.title}</h3>
-            <p>{t.description}</p>
-            {f'<h4>Delivered Work (Human-Approved):</h4><pre>{t.draft_output}</pre>' if t.status == 'APPROVED' else '<p style="color:#64748b;"><em>Awaiting VAI drafting and human worker approval...</em></p>'}
+            <h3>{h(t.title)}</h3>
+            <p>{h(t.description)}</p>
+            {f'<h4>Delivered Work (Human-Approved):</h4><pre>{h(t.draft_output)}</pre>' if t.status == 'APPROVED' else '<p style="color:#64748b;"><em>Awaiting VAI drafting and human worker approval...</em></p>'}
         </div>
         """
         for t in tasks
@@ -150,7 +157,7 @@ def worker_portal(db: Session = Depends(get_db)):
             actions = f"""
             <form action="/worker/tasks/{t.id}/approve" method="post" style="margin-top:12px;">
                 <label><strong>Review or Edit VAI Draft Before Delivery:</strong></label>
-                <textarea name="final_output" rows="4">{draft_val}</textarea>
+                <textarea name="final_output" rows="4">{h(draft_val)}</textarea>
                 <button type="submit" class="btn-green">Approve & Deliver (${t.payout_amount:.2f})</button>
             </form>
             <form action="/worker/tasks/{t.id}/decline" method="post" style="margin-top:8px;">
@@ -160,11 +167,11 @@ def worker_portal(db: Session = Depends(get_db)):
 
         task_items += f"""
         <div class="card">
-            <span class="badge {'badge-approved' if t.status == 'APPROVED' else 'badge-ready'}">{t.status}</span>
+            <span class="badge {'badge-approved' if t.status == 'APPROVED' else 'badge-ready'}">{h(t.status)}</span>
             <strong style="float:right;">Payout: ${t.payout_amount:.2f}</strong>
-            <h3>{t.title}</h3>
-            <p>{t.description}</p>
-            {f'<p><strong>Local VAI Guardrail Check:</strong> {t.ai_reasoning}</p>' if t.ai_reasoning else ''}
+            <h3>{h(t.title)}</h3>
+            <p>{h(t.description)}</p>
+            {f'<p><strong>Local VAI Guardrail Check:</strong> {h(t.ai_reasoning)}</p>' if t.ai_reasoning else ''}
             {actions}
         </div>
         """
@@ -172,9 +179,9 @@ def worker_portal(db: Session = Depends(get_db)):
     html = f"""
     <h1>VAI Worker Control Dashboard</h1>
     <div class="card" style="border-left: 5px solid #16a34a;">
-        <h2>{worker.display_name}</h2>
+        <h2>{h(worker.display_name)}</h2>
         <p><strong>Direct Worker Earnings:</strong> ${worker.total_earned:.2f} (100% retained by worker)</p>
-        <p><strong>Active Boundaries:</strong> {worker.boundaries}</p>
+        <p><strong>Active Boundaries:</strong> {h(worker.boundaries)}</p>
     </div>
 
     <h2>Task & Human Approval Queue</h2>
