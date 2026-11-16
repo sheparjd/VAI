@@ -198,7 +198,7 @@ def worker_portal(db: Session = Depends(get_db)):
             <strong style="float:right;">Payout: ${t.payout_amount:.2f}</strong>
             <h3>{h(t.title)}</h3>
             <p>{h(t.description)}</p>
-            {f'<p><strong>Local VAI Guardrail Check:</strong> {h(t.ai_reasoning)}</p>' if t.ai_reasoning else ''}
+            {f'<p><strong>Local VAI Check (expertise &amp; guardrails):</strong> {h(t.ai_reasoning)}</p>' if t.ai_reasoning else ''}
             {actions}
         </div>
         """

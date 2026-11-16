@@ -44,7 +44,7 @@ The system is split into two independent components connected via an outbound HT
 * **`interviewer.py` (Training Pipeline):** Conducts a self-paced, one-question-at-a-time interview via local Ollama models. Each answer is saved to `data/interview_transcript.json` as it's given, so sessions can be paused and resumed. Synthesizes a structured `voiceprint.json` configuration, backing up the previous one to `data/backups/`.
 * **`memory_store.py` (Personal RAG):** Uses a persistent local **ChromaDB** instance (`data/chroma_db/`, telemetry disabled) with embeddings from a small local Ollama model (`nomic-embed-text` by default, override with `VAI_EMBED_MODEL`). Indexes interview Q&As, `.txt`/`.md` documents in `data/knowledge/`, and reviewed work from `data/corrections.jsonl`. Entries are keyed by content hash, so a sync only embeds new or changed text.
 * **`feedback.py` (Learning from Review):** Keeps a local record of every draft the node submits (`data/drafts.jsonl`) and how the worker resolved it (`data/corrections.jsonl`: approved unchanged, approved with edits plus a similarity score, or declined). The platform only stores final deliverables; the AI-draft-versus-final comparison never leaves the worker's machine.
-* **`worker_agent.py` (Autonomous Drafter):** Polls the marketplace for `OPEN` tasks, evaluates each task against `never_accept_tasks_involving` rules in `voiceprint.json`, retrieves the most relevant memory for that task from `memory_store.py`, and drafts deliverables in the worker's authentic voice. Each poll also checks `/api/bridge/outcomes` for drafts the worker has since reviewed, and records them via `feedback.py`.
+* **`worker_agent.py` (Autonomous Drafter):** Polls the marketplace for `OPEN` tasks. For each one it first runs a separate **expertise check** against the worker's `primary_domains` (falling back to headline and bio) and `competence_boundaries.outside_expertise`: out-of-scope tasks are declined with a reason, and borderline ones are drafted with a "Borderline expertise" note for the worker (or declined if `decline_when_unsure` is true). It then evaluates the task against `never_accept_tasks_involving` rules in `voiceprint.json`, retrieves the most relevant memory for that task from `memory_store.py`, and drafts deliverables in the worker's authentic voice. Each poll also checks `/api/bridge/outcomes` for drafts the worker has since reviewed, and records them via `feedback.py`.
 
 All local data lives under `local_node/data/` (git-ignored); set `VAI_DATA_DIR` to use a different folder.
 
@@ -78,7 +78,6 @@ To ensure reliable execution across consumer Windows, macOS, and Linux environme
 
 ## 6. Roadmap for Contributors
 
-* **Competence Boundaries:** Let the node decline tasks that fall outside the worker's expertise, not just their ethical guardrails.
 * **Deeper Interviews:** Adaptive, multi-session interview modules based on cognitive task analysis (critical decision method, knowledge audits).
 * **Authentication & Node Pairing:** Add cryptographic API tokens so each local VAI node authenticates securely with its corresponding `WorkerProfile`.
 * **Escrow & Direct Payouts:** Integrate Stripe Connect Express accounts for automated employer-to-worker disbursements upon task approval.

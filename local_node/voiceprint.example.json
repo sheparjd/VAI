@@ -33,6 +33,14 @@
       "when_confidence_is_low": true
     }
   },
+  "competence_boundaries": {
+    "outside_expertise": [
+      "Creative writing and poetry",
+      "Legal contracts",
+      "Graphic design"
+    ],
+    "decline_when_unsure": false
+  },
   "accessibility_and_pacing": {
     "preferred_input_mode": "voice_or_text",
     "max_active_tasks": 2,

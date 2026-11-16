@@ -15,6 +15,8 @@ VOICEPRINT_PATH = BASE_DIR / "voiceprint.json"
 INTERVIEW_QUESTIONS = [
     "What name or alias would you like employers to see on your VAI profile?",
     "In a couple of sentences, what kinds of problems do you enjoy solving or what skills do you bring?",
+    "List the specific areas you're genuinely expert in, separated by commas. (For example: Python backend development, SQL data cleanup, technical documentation)",
+    "What kinds of work are outside your expertise, so your AI should turn them down even though they're not off-limits? (For example: poetry, legal contracts, graphic design)",
     "How would you describe your ideal communication style? (For example: direct and concise, warm and detailed, bullet points over long paragraphs)",
     "What types of tasks or requests should your AI representative ALWAYS turn down automatically?",
     "How many hours do you typically need to review and approve work before it gets sent to an employer?",
@@ -145,12 +147,16 @@ def synthesize_voiceprint(transcript: list[dict], model: str) -> dict:
         '    "never_accept_tasks_involving": [],\n'
         '    "require_human_approval": {"before_accepting_job": true, "before_submitting_final_deliverable": true, "when_confidence_is_low": true}\n'
         "  },\n"
+        '  "competence_boundaries": {"outside_expertise": [], "decline_when_unsure": false},\n'
         '  "accessibility_and_pacing": {"preferred_input_mode": "voice_or_text", "max_active_tasks": 2, "review_window_hours": 24, "auto_pause_when_offline": true}\n'
         "}\n"
         "Rules:\n"
         "1. Output ONLY raw valid JSON. Do not include markdown fences or extra commentary.\n"
         "2. Never invent medical details, diagnoses, or private personal information.\n"
-        "3. Keep 'before_submitting_final_deliverable' set to true."
+        "3. Keep 'before_submitting_final_deliverable' set to true.\n"
+        "4. Fill 'primary_domains' with the areas the worker says they are expert in, and "
+        "'outside_expertise' with the kinds of work they say are outside their expertise. "
+        "Use the worker's own words; never add areas they didn't mention."
     )
 
     response = ollama.chat(

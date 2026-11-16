@@ -89,6 +89,8 @@ The node polls the platform for open tasks, drafts each one with your local Olla
 
 For each task, the node looks up the most relevant parts of your **personal memory**: your interview answers, any `.txt`/`.md` files you put in `local_node/data/knowledge/`, and work you've previously approved. It learns from your reviews: when you approve a draft (edited or not) or decline it, the node records the outcome locally in `local_node/data/corrections.jsonl` and adds your final answer to its memory. All of this stays on your machine. If the embedding model isn't installed, the node falls back to using your interview transcript alone.
 
+Before drafting, the node checks whether each task is within your expertise, using the areas you listed in the interview (`primary_domains`) and the kinds of work you said are outside it (`competence_boundaries.outside_expertise` in `voiceprint.json`). Tasks clearly outside your expertise are declined with a reason shown on your dashboard; borderline ones are still drafted but flagged "Borderline expertise" so you can decide. Set `decline_when_unsure` to `true` to decline borderline tasks too.
+
 The interview can be paused and resumed: answers are saved as you go, and running `python local_node/interviewer.py` again picks up where you left off.
 
 

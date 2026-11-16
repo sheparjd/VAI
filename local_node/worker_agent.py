@@ -142,6 +142,99 @@ def evaluate_and_draft_task(task: dict, voiceprint: dict, examples: str, model: 
     }
 
 
+def _as_list(value) -> list[str]:
+    if isinstance(value, str):
+        value = [value]
+    return [str(v).strip() for v in (value or []) if str(v).strip()]
+
+
+def check_competence(task: dict, voiceprint: dict, memory_text: str, model: str) -> dict | None:
+    """Decide whether a task is within the worker's expertise, before any drafting.
+
+    Returns {"verdict": "IN_SCOPE" | "OUT_OF_SCOPE" | "UNSURE", "matched_area", "reason"},
+    or None when the voiceprint says nothing about expertise (the check is skipped).
+    This is a separate, short model call: judging scope on its own is more
+    reliable than asking the model to judge and draft in one go.
+    """
+    profile = voiceprint.get("worker_profile", {})
+    competence = voiceprint.get("competence_boundaries", {})
+    expertise = _as_list(profile.get("primary_domains"))
+    if not expertise:
+        # Older or sparse voiceprints: fall back to the headline and bio.
+        expertise = _as_list([profile.get("headline"), profile.get("bio_summary")])
+        expertise = list(dict.fromkeys(expertise))  # drop duplicates, keep order
+    if not expertise:
+        return None
+    outside = _as_list(competence.get("outside_expertise"))
+
+    system_prompt = (
+        "You decide whether an employer's task falls within ONE specific worker's professional expertise.\n"
+        f"The worker's areas of expertise: {json.dumps(expertise)}\n"
+        f"Areas the worker says are OUTSIDE their expertise: {json.dumps(outside)}\n\n"
+        "Verdicts:\n"
+        "- IN_SCOPE: doing this task well mainly needs knowledge or skills from the worker's areas, "
+        "or is work a professional in those areas routinely does. Also IN_SCOPE if the memory below "
+        "shows the worker has approved similar work before.\n"
+        "- OUT_OF_SCOPE: doing it well mainly needs specialist knowledge from a different field, or it "
+        "matches one of the 'outside' areas. General writing or research ability alone does NOT make a "
+        "task in scope.\n"
+        "- UNSURE: genuinely borderline.\n\n"
+        f"{memory_text or ''}\n\n"
+        "Output ONLY a JSON object: "
+        '{"verdict": "IN_SCOPE" or "OUT_OF_SCOPE" or "UNSURE", '
+        '"matched_area": "a short field name: for IN_SCOPE the worker area it uses, otherwise the field the task actually needs (e.g. Law)", '
+        '"reason": "one short sentence"}'
+    )
+    response = ollama.chat(
+        model=model,
+        messages=[
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": f"Task title: {task['title']}\nTask description: {task['description']}"},
+        ],
+        format="json",
+        options={"temperature": 0},  # same task -> same verdict
+    )
+    raw_json = response["message"]["content"] if isinstance(response, dict) else response.message.content
+    try:
+        result = json.loads(raw_json)
+    except json.JSONDecodeError as e:
+        raise DraftError(f"competence check returned invalid JSON ({e})") from e
+    verdict = str(result.get("verdict", "")).strip().upper().replace(" ", "_")
+    if verdict not in ("IN_SCOPE", "OUT_OF_SCOPE", "UNSURE"):
+        raise DraftError(f"competence check returned an unknown verdict: {result.get('verdict')!r}")
+    area = str(result.get("matched_area") or "").strip()
+    if area.lower() in ("none", "null", "n/a"):
+        area = ""
+    return {
+        "verdict": verdict,
+        "matched_area": area,
+        "reason": str(result.get("reason", "")),
+    }
+
+
+def handle_task(task: dict, voiceprint: dict, memory_text: str, model: str) -> dict:
+    """Competence check first; draft only if the task is within the worker's expertise."""
+    scope = check_competence(task, voiceprint, memory_text, model)
+    decline_when_unsure = bool(voiceprint.get("competence_boundaries", {}).get("decline_when_unsure", False))
+
+    area = f" ({scope['matched_area']})" if scope and scope["matched_area"] else ""
+    if scope:
+        print(f" -> Expertise check: {scope['verdict']}{area}")
+    if scope and (scope["verdict"] == "OUT_OF_SCOPE" or (scope["verdict"] == "UNSURE" and decline_when_unsure)):
+        label = "Outside expertise" if scope["verdict"] == "OUT_OF_SCOPE" else "Possibly outside expertise"
+        return {
+            "decision": "DECLINE",
+            "reason": f"{label}{area}: {scope['reason']}",
+            "draft_deliverable": "",
+        }
+
+    result = evaluate_and_draft_task(task, voiceprint, memory_text, model)
+    if scope and scope["verdict"] == "UNSURE":
+        # Borderline: draft it, but make sure the worker sees the doubt when reviewing.
+        result["reason"] = f"Borderline expertise{area}: {scope['reason']} {result['reason']}"
+    return result
+
+
 def _bridge_request(method: str, path: str, payload: dict | None = None):
     """Call the platform's bridge API directly via http.client; returns parsed JSON."""
     conn = http.client.HTTPConnection(PLATFORM_HOST, PLATFORM_PORT, timeout=10)
@@ -262,13 +355,13 @@ def run_bridge_loop():
                 if failures.get(task_id, 0) >= MAX_ATTEMPTS_PER_TASK:
                     continue  # already gave up on this one; leave it for the worker
 
-                print(f"[New Task #{task_id}] '{task['title']}' — Evaluating against guardrails...")
+                print(f"[New Task #{task_id}] '{task['title']}' — Checking expertise and guardrails...")
                 try:
                     if memory:
                         examples = memory.query_memory(f"{task['title']}\n{task['description']}")
                     else:
                         examples = transcript_examples
-                    result = evaluate_and_draft_task(task, voiceprint, examples, model)
+                    result = handle_task(task, voiceprint, examples, model)
                 except Exception as e:
                     failures[task_id] = failures.get(task_id, 0) + 1
                     print(f" -> [AI Error] Could not draft task #{task_id} "
