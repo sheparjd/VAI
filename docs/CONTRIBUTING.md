@@ -76,7 +76,7 @@ If you are looking for a place to jump in, check the **Issues** tab or pick up o
    git checkout -b feature/your-feature-name
    ```
 2. Keep your changes focused and modular.
-3. Verify that your changes do **not** commit private files (`voiceprint.json`, `.env`, `*.db`, or `local_node/data/*`).
+3. Verify that your changes do **not** commit private files (`voiceprint.json`, `.env`, `*.db`, `local_node/data/*`, `local_node/profiles/`, `node_credentials.json`, or returned `vai-answers-*.json` files).
 4. Run through the checklist in [docs/ACCESSIBILITY.md](docs/ACCESSIBILITY.md) if you modified any user interface or CLI prompts.
 5. Push your branch to your fork and open a **Pull Request** against `main` with a clear summary of what your change improves.
 

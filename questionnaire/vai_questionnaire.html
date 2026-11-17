@@ -1,0 +1,220 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data:; form-action 'none'; base-uri 'none'">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>VAI Questionnaire</title>
+<style>
+:root {
+  --bg: #f7f7f5; --surface: #ffffff; --text: #1c1c1a; --muted: #5f5f5a; --line: #dcdcd6;
+  --accent: #1f6f5c; --accent-text: #ffffff; --focus: #b45309; --ok: #1f6f5c; --chip: #ecece7;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #161615; --surface: #1f1f1d; --text: #ecece8; --muted: #a3a39c; --line: #3a3a36;
+    --accent: #5fbfa3; --accent-text: #0f1f1a; --focus: #f59e0b; --ok: #5fbfa3; --chip: #2a2a27;
+  }
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--text);
+  font: 17px/1.6 system-ui, -apple-system, "Segoe UI", sans-serif; }
+main { max-width: 760px; margin: 0 auto; padding: 32px 16px 120px; }
+h1 { font-size: 1.7rem; line-height: 1.25; margin: 0 0 12px; }
+h2 { font-size: 1.25rem; margin: 0 0 4px; }
+p { margin: 0 0 12px; }
+.lede { color: var(--muted); }
+.panel { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 20px; margin: 20px 0; }
+.privacy { border-left: 4px solid var(--accent); }
+.privacy ul { margin: 8px 0 0; padding-left: 20px; }
+fieldset { border: 0; margin: 0; padding: 0; }
+legend { padding: 0; }
+.tag { display: inline-block; font-size: .8rem; font-weight: 600; background: var(--chip); color: var(--muted);
+  border-radius: 999px; padding: 1px 10px; margin-left: 8px; vertical-align: middle; }
+.q { margin-top: 20px; }
+.q label { display: block; font-weight: 600; margin-bottom: 6px; }
+.q .num { color: var(--muted); font-weight: 400; margin-right: 4px; }
+textarea, input[type=text] { width: 100%; font: inherit; color: var(--text); background: var(--bg);
+  border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; }
+textarea { min-height: 96px; resize: vertical; }
+textarea:focus, input:focus, button:focus, summary:focus { outline: 3px solid var(--focus); outline-offset: 2px; }
+details > summary { cursor: pointer; font-weight: 600; color: var(--accent); margin-top: 8px; }
+.bar { position: fixed; left: 0; right: 0; bottom: 0; background: var(--surface); border-top: 1px solid var(--line); }
+.bar-inner { max-width: 760px; margin: 0 auto; padding: 12px 16px; display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+.progress { flex: 1 1 160px; color: var(--muted); font-size: .95rem; }
+button { font: inherit; font-weight: 600; border-radius: 8px; padding: 10px 16px; cursor: pointer;
+  border: 1px solid var(--line); background: var(--surface); color: var(--text); }
+button.primary { background: var(--accent); color: var(--accent-text); border-color: var(--accent); }
+#status { min-height: 1.6em; color: var(--ok); font-weight: 600; }
+.after { display: none; }
+.after.show { display: block; }
+.small { font-size: .9rem; color: var(--muted); }
+</style>
+</head>
+<body>
+<main>
+  <h1>Help build a test VAI</h1>
+  <p class="lede">VAI (Voiceprint AI) lets people train a personal AI representative from their own expertise.
+  The person who sent you this is testing it with a few colleagues, and your answers would become one of the test VAIs.</p>
+
+  <section class="panel privacy" aria-labelledby="privacy-h">
+    <h2 id="privacy-h">Your answers stay with you until you send them</h2>
+    <ul>
+      <li>This page works offline and is blocked from sending anything over the internet.</li>
+      <li>Your answers are saved as you type, in this browser only, so you can close it and come back.</li>
+      <li>When you're done, <strong>Save my answers</strong> downloads a file. You choose whether to email it back.</li>
+      <li>The test VAI is built on the sender&#x27;s own computer. Only its public card appears on the test
+        marketplace: name, headline, short summary, areas of expertise and the kinds of work it turns down.
+        Your answers themselves stay on that computer.</li>
+    </ul>
+    <p class="small" style="margin-top:10px;">Skip any question. Leave out names, client details and anything confidential.
+    The first part takes about 10 minutes; the optional deeper parts take 30–45 more.</p>
+  </section>
+
+  <form id="form" autocomplete="off" onsubmit="return false"></form>
+
+  <section class="panel after" id="after" aria-live="polite">
+    <h2>Saved</h2>
+    <p>Email the downloaded file (<strong id="fname"></strong>) back to the person who sent you this.</p>
+    <p class="small">If the download didn't work, use <em>Copy answers</em> and paste them into the email instead.
+    After sending, you can clear your answers from this browser.</p>
+    <button type="button" id="clear">Clear my answers from this browser</button>
+  </section>
+</main>
+
+<div class="bar" role="region" aria-label="Save">
+  <div class="bar-inner">
+    <div class="progress" id="progress" aria-live="polite"></div>
+    <button type="button" id="copy">Copy answers</button>
+    <button type="button" class="primary" id="save">Save my answers</button>
+  </div>
+  <div class="bar-inner" style="padding-top:0;"><div id="status" role="status"></div></div>
+</div>
+
+<script>
+"use strict";
+const SPEC = [{"id": "profile", "title": "About you and your work", "intro": "These build your VAI's profile. They matter most, so please answer as many as you can.", "optional": false, "questions": [{"key": "profile_1", "text": "What name or alias would you like employers to see on your VAI profile?"}, {"key": "profile_2", "text": "In a couple of sentences, what kinds of problems do you enjoy solving or what skills do you bring?"}, {"key": "profile_3", "text": "List the specific areas you're genuinely expert in, separated by commas. (For example: Python backend development, SQL data cleanup, technical documentation)"}, {"key": "profile_4", "text": "What kinds of work are outside your expertise, so your AI should turn them down even though they're not off-limits? (For example: poetry, legal contracts, graphic design)"}, {"key": "profile_5", "text": "How would you describe your ideal communication style? (For example: direct and concise, warm and detailed, bullet points over long paragraphs)"}, {"key": "profile_6", "text": "What types of tasks or requests should your AI representative ALWAYS turn down automatically?"}, {"key": "profile_7", "text": "How many hours do you typically need to review and approve work before it gets sent to an employer?"}, {"key": "profile_8", "text": "Share one short example of how you would explain a complex idea or solve a problem in your own words."}]}, {"id": "area", "title": "Pick one area to go deeper", "intro": "The rest is optional. It teaches your VAI how you think in one area, not just what you do. Choose the area you know best.", "optional": true, "questions": [{"key": "area", "text": "Which one area of expertise should the next questions focus on?", "short": true}]}, {"id": "audit", "title": "How you think about {area}", "intro": "What you notice, your rules of thumb and the mistakes you avoid. Short answers with one concrete example work best.", "optional": true, "questions": [{"key": "audit_big_picture", "text": "When you take on a {area} task, what do you keep in mind the whole way through, the big picture a newer person might lose track of?"}, {"key": "audit_noticing", "text": "What do you notice in {area} work that less experienced people tend to miss? A specific example helps."}, {"key": "audit_early_signs", "text": "Early on in a {area} task, what tells you whether it's going to be straightforward or tricky?"}, {"key": "audit_rules_of_thumb", "text": "What rules of thumb or shortcuts do you rely on in {area}?"}, {"key": "audit_anomalies", "text": "How do you spot that something is off or unusual in {area} work? What are the warning signs?"}, {"key": "audit_when_stuck", "text": "In {area}, when your first approach doesn't work, what do you try next?"}, {"key": "audit_common_mistakes", "text": "What are the most common mistakes people make in {area}, and how do you avoid them?"}, {"key": "audit_quality", "text": "How can you tell a {area} result is done really well, rather than just acceptable?"}]}, {"id": "case", "title": "A tough case in {area}", "intro": "One real, difficult situation from your experience, and the decisions you made. Leave out names and anything confidential.", "optional": true, "questions": [{"key": "case_story", "text": "Think of a real, memorable situation in {area} where your experience made the difference: a tricky problem or a tough call. Briefly tell the story."}, {"key": "case_timeline", "text": "Now walk through the key moments in order: what happened first, and what decisions did you make along the way?"}, {"key": "case_probe_1", "text": "At the key moment, what did you notice that told you what was really going on?"}, {"key": "case_probe_2", "text": "What other options did you consider, and why didn't you take them?"}, {"key": "case_probe_3", "text": "What would someone less experienced have done in that situation?"}, {"key": "case_probe_4", "text": "If one important detail had been different, what would you have done instead?"}, {"key": "case_lesson", "text": "Looking back, what's the lesson you'd pass on to someone newer in {area}?"}]}, {"id": "walk", "title": "Walk through a typical task", "intro": "Describe a typical task, then talk through how you'd handle it.", "optional": true, "questions": [{"key": "walk_task", "text": "Describe a typical small task a client might give you in {area}: 2-3 sentences with concrete details. The next questions are about how you'd handle it."}, {"key": "walk_start", "text": "How would you start on this? Talk through your first steps."}, {"key": "walk_clarify", "text": "What would you check, or ask the client, before going further?"}, {"key": "walk_deliverable", "text": "What would the finished result look like?"}, {"key": "walk_risks", "text": "Where could this go wrong, and how would you guard against it?"}]}];
+const FORMAT = "vai-questionnaire", VERSION = 1;
+const STORE_KEY = "vai-questionnaire-v" + VERSION;
+const form = document.getElementById("form");
+let answers = {};
+try { answers = JSON.parse(localStorage.getItem(STORE_KEY) || "{}") || {}; } catch (e) { answers = {}; }
+
+function area() { return (answers.area || "").trim() || "your area"; }
+function fill(t) { return t.split("{area}").join(area()); }
+
+function build() {
+  let n = 0;
+  for (const sec of SPEC) {
+    const panel = document.createElement("section");
+    panel.className = "panel";
+    const fs = document.createElement("fieldset");
+    const lg = document.createElement("legend");
+    const h = document.createElement("h2");
+    h.dataset.template = sec.title;
+    h.textContent = fill(sec.title);
+    if (sec.optional) { const t = document.createElement("span"); t.className = "tag"; t.textContent = "Optional"; h.appendChild(t); }
+    lg.appendChild(h);
+    fs.appendChild(lg);
+    const intro = document.createElement("p");
+    intro.className = "small"; intro.textContent = sec.intro;
+    fs.appendChild(intro);
+    let host = fs;
+    if (sec.optional && sec.id !== "area") {
+      const d = document.createElement("details");
+      d.open = sec.questions.some(q => (answers[q.key] || "").trim());
+      const s = document.createElement("summary");
+      s.textContent = "Show these questions";
+      d.appendChild(s); fs.appendChild(d); host = d;
+    }
+    for (const q of sec.questions) {
+      n += 1;
+      const wrap = document.createElement("div"); wrap.className = "q";
+      const id = "q_" + q.key;
+      const label = document.createElement("label"); label.htmlFor = id;
+      const num = document.createElement("span"); num.className = "num"; num.textContent = n + ".";
+      const txt = document.createElement("span"); txt.dataset.template = q.text; txt.textContent = fill(q.text);
+      label.append(num, txt);
+      const field = q.short ? document.createElement("input") : document.createElement("textarea");
+      if (q.short) field.type = "text";
+      field.id = id; field.name = q.key; field.value = answers[q.key] || "";
+      field.maxLength = 8000;
+      field.addEventListener("input", () => {
+        answers[q.key] = field.value;
+        persist();
+        if (q.key === "area") refreshText();
+        progress();
+      });
+      wrap.append(label, field); host.appendChild(wrap);
+    }
+    panel.appendChild(fs); form.appendChild(panel);
+  }
+}
+
+function refreshText() {
+  document.querySelectorAll("[data-template]").forEach(el => {
+    const tag = el.querySelector(".tag");
+    el.textContent = fill(el.dataset.template);
+    if (tag) el.appendChild(tag);
+  });
+}
+
+function persist() { try { localStorage.setItem(STORE_KEY, JSON.stringify(answers)); } catch (e) {} }
+
+function counts() {
+  const all = SPEC.flatMap(s => s.questions.map(q => q.key));
+  const done = all.filter(k => (answers[k] || "").trim()).length;
+  return [done, all.length];
+}
+function progress() {
+  const [done, total] = counts();
+  document.getElementById("progress").textContent = done + " of " + total + " answered";
+}
+
+function payload() {
+  const clean = {};
+  for (const [k, v] of Object.entries(answers)) if ((v || "").trim()) clean[k] = v.trim();
+  return { format: FORMAT, version: VERSION, exported_at: new Date().toISOString(), answers: clean };
+}
+function fileName() {
+  const name = (answers.profile_1 || "colleague").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 30) || "colleague";
+  return "vai-answers-" + name + ".json";
+}
+function status(msg) { document.getElementById("status").textContent = msg; }
+
+document.getElementById("save").addEventListener("click", () => {
+  const [done] = counts();
+  if (!done) { status("Answer at least one question first."); return; }
+  const blob = new Blob([JSON.stringify(payload(), null, 2)], { type: "application/json" });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob); a.download = fileName();
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+  document.getElementById("fname").textContent = fileName();
+  document.getElementById("after").classList.add("show");
+  status("Downloaded " + fileName() + ". Email it back when you're ready.");
+});
+
+document.getElementById("copy").addEventListener("click", async () => {
+  const text = JSON.stringify(payload(), null, 2);
+  try { await navigator.clipboard.writeText(text); status("Copied. Paste it into your email reply."); }
+  catch (e) {
+    const t = document.createElement("textarea"); t.value = text; document.body.appendChild(t); t.select();
+    const ok = document.execCommand && document.execCommand("copy"); t.remove();
+    status(ok ? "Copied. Paste it into your email reply." : "Couldn't copy here; please use Save my answers.");
+  }
+});
+
+document.getElementById("clear").addEventListener("click", () => {
+  if (!confirm("Clear all your answers from this browser? Do this only after you've sent them.")) return;
+  answers = {};
+  try { localStorage.removeItem(STORE_KEY); } catch (e) {}
+  form.innerHTML = ""; build(); progress();
+  document.getElementById("after").classList.remove("show");
+  status("Cleared from this browser.");
+});
+
+build(); progress();
+</script>
+</body>
+</html>

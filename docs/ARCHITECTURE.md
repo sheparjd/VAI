@@ -47,14 +47,15 @@ The system is split into two independent components connected via an outbound HT
 * **`feedback.py` (Learning from Review):** Keeps a local record of every draft the node submits (`data/drafts.jsonl`) and how the worker resolved it (`data/corrections.jsonl`: approved unchanged, approved with edits plus a similarity score, or declined). The platform only stores final deliverables; the AI-draft-versus-final comparison never leaves the worker's machine.
 * **`worker_agent.py` (Autonomous Drafter):** Polls the marketplace for `OPEN` tasks. For each one it first runs a separate **expertise check** against the worker's `primary_domains` (falling back to headline and bio) and `competence_boundaries.outside_expertise`: out-of-scope tasks are declined with a reason, and borderline ones are drafted with a "Borderline expertise" note for the worker (or declined if `decline_when_unsure` is true). It then evaluates the task against `never_accept_tasks_involving` rules in `voiceprint.json`, retrieves the most relevant memory for that task from `memory_store.py`, and drafts deliverables in the worker's authentic voice. Each poll also checks `/api/bridge/outcomes` for drafts the worker has since reviewed, and records them via `feedback.py`.
 
-All local data lives under `local_node/data/` (git-ignored); set `VAI_DATA_DIR` to use a different folder.
+All local data lives under `local_node/data/` (git-ignored); set `VAI_DATA_DIR` to use a different folder. With `VAI_PROFILE=<name>`, each VAI on the machine instead keeps its voiceprint, data and marketplace token in `local_node/profiles/<name>/` (see `profile_paths.py`). `make_questionnaire.py` and `import_answers.py` build test profiles from an offline questionnaire.
 
 ### B. Two-Sided Web Platform (`web_platform/`)
-* **`models.py` (Data Layer):** Defines `WorkerProfile` (public skills, boundaries, earnings) and `MarketplaceTask` (job lifecycle states). Defaults to SQLite for zero-config local demos and supports PostgreSQL via `DATABASE_URL`.
+* **`config.py` (Environments):** Reads `VAI_ENV` (`dev`, `staging`, `production`) and refuses to start staging or production without their own database, secret key and node registration key. See [ENVIRONMENTS.md](ENVIRONMENTS.md).
+* **`models.py` (Data Layer):** Defines `WorkerProfile` (a VAI's public card, earnings and a hash of its node token) and `MarketplaceTask` (job lifecycle states and the hired VAI). Defaults to SQLite for zero-config local development and supports PostgreSQL via `DATABASE_URL`. It never seeds or reads worker files.
 * **`main.py` (Web UI & Bridge API):**
-  * **Employer Side (`/employer`):** Displays verified VAI profiles, allows posting scoped tasks with direct payouts, and displays human-approved deliverables.
-  * **Worker Side (`/worker`):** Provides an accessible approval queue where the human worker reviews, edits, approves, or declines AI-generated drafts.
-  * **Bridge Endpoints (`/api/bridge/*`):** Exposes lightweight JSON endpoints for local worker nodes.
+  * **Employer Side (`/employer`):** Lists registered VAIs, lets employers hire a specific VAI for a scoped task with a direct payout, and displays human-approved deliverables.
+  * **Worker Side (`/worker`, `/worker/<id>`):** One accessible approval queue per VAI, where its human worker reviews, edits, approves, or declines AI-generated drafts.
+  * **Bridge Endpoints (`/api/bridge/*`):** `register` accepts only a VAI's public card (unknown fields are rejected) and issues a token. `tasks`, `submit` and `outcomes` require that token and only cover tasks hired to that VAI.
 
 ---
 

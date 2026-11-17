@@ -16,14 +16,12 @@ Memory sources:
 import hashlib
 import json
 import os
-from pathlib import Path
 
 import chromadb
 import ollama
 from chromadb.config import Settings
 
-BASE_DIR = Path(__file__).resolve().parent
-DATA_DIR = Path(os.getenv("VAI_DATA_DIR") or BASE_DIR / "data")
+from profile_paths import DATA_DIR
 TRANSCRIPT_PATH = DATA_DIR / "interview_transcript.json"
 KNOWLEDGE_DIR = DATA_DIR / "knowledge"
 CORRECTIONS_PATH = DATA_DIR / "corrections.jsonl"

@@ -105,6 +105,33 @@ The basic interview captures who you are; the deeper interview captures how you 
 
 Do as many or as few as you like, in any order, across as many sessions as you need. Every answer is saved immediately; type `skip` to skip a question for good, or `pause` to stop and resume later. Your local model may ask an optional follow-up when an answer is brief (run with `--no-followups` for shorter sessions). After each module it condenses your answers into short notes, using only your words, and you approve them before they're saved to `local_node/data/expertise_notes.json` (editable anytime). Your running VAI node picks up new answers and notes within about 5 minutes.
 
+### 7. Run Several VAIs (Testing With Colleagues)
+The marketplace supports any number of VAIs. Each runs its own node with its own **profile**, a folder under `local_node/profiles/<name>/` (git-ignored) that holds that VAI's voiceprint, interview answers, memory and marketplace token. Choose a profile with `VAI_PROFILE`. Without it, the original `local_node/voiceprint.json` and `local_node/data/` are used.
+
+To build test VAIs from colleagues without them installing anything:
+
+1. Build the questionnaire, then email `questionnaire/vai_questionnaire.html` as an attachment (zip it if your mail system blocks `.html`):
+   ```bash
+   python local_node/make_questionnaire.py --sender "Your name"
+   ```
+   It opens in any browser and is blocked from making network requests. It autosaves in the colleague's own browser, and **Save my answers** downloads a `.json` file they email back. It covers the basic interview plus, optionally, the deeper interview for one area, with fixed questions in place of the adaptive follow-ups.
+2. Import each returned file. This writes the profile and builds its voiceprint with your local model:
+   ```bash
+   python local_node/import_answers.py vai-answers-alice.json --profile alice
+   ```
+   Check `local_node/profiles/alice/voiceprint.json` (the name, headline, bio, areas and boundaries are what the marketplace shows), then delete the answers file.
+3. Start a node per VAI, each in its own terminal (PowerShell shown):
+   ```powershell
+   $env:VAI_PROFILE = "alice"; python local_node/worker_agent.py
+   ```
+
+Each node registers its VAI's public card with the platform and receives its own token. Employers choose which VAI to hire, each VAI has its own dashboard under `/worker`, and a node only ever sees its own tasks. All nodes share one Ollama model, so running several costs little extra memory; they draft one after another.
+
+The questionnaire is a development tool for colleagues. Real workers use the one-question-at-a-time interviews above (see [ACCESSIBILITY.md](docs/ACCESSIBILITY.md)).
+
+### Environments
+Dev, staging and production run the same code with separate configuration and data. See [docs/ENVIRONMENTS.md](docs/ENVIRONMENTS.md) for what each one requires and what the platform can know about a worker.
+
 
 ---
 

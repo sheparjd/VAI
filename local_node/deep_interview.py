@@ -30,11 +30,9 @@ from pathlib import Path
 import ollama
 
 MODEL_NAME = os.getenv("OLLAMA_MODEL", "llama3.1")
-BASE_DIR = Path(__file__).resolve().parent
-DATA_DIR = Path(os.getenv("VAI_DATA_DIR") or BASE_DIR / "data")
+from profile_paths import DATA_DIR, VOICEPRINT_PATH
 STATE_PATH = DATA_DIR / "deep_interview.json"
 NOTES_PATH = DATA_DIR / "expertise_notes.json"
-VOICEPRINT_PATH = BASE_DIR / "voiceprint.json"
 
 MODULES = {
     "knowledge_audit": "Knowledge audit",

@@ -14,6 +14,11 @@ __pycache__/
 local_node/voiceprint.json
 local_node/data/*
 !local_node/data/.gitkeep
+local_node/profiles/
+local_node/node_credentials.json
+# Returned questionnaire answers (import them, then delete)
+vai-answers-*.json
+local_node/inbox/
 
 # Local databases & vector stores
 *.db
@@ -26,3 +31,5 @@ chroma_db/
 .idea/
 .DS_Store
 Thumbs.db
+# Personal workflow notes
+*.local.txt

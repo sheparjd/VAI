@@ -6,10 +6,8 @@ import ollama
 
 # Configuration
 MODEL_NAME = os.getenv("OLLAMA_MODEL", "llama3.1")
-BASE_DIR = Path(__file__).resolve().parent
-DATA_DIR = Path(os.getenv("VAI_DATA_DIR") or BASE_DIR / "data")
+from profile_paths import DATA_DIR, VOICEPRINT_PATH
 TRANSCRIPT_PATH = DATA_DIR / "interview_transcript.json"
-VOICEPRINT_PATH = BASE_DIR / "voiceprint.json"
 
 # Accessible, low-fatigue core questions (one at a time)
 INTERVIEW_QUESTIONS = [

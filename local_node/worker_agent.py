@@ -2,21 +2,21 @@ import http.client
 import json
 import os
 import time
-from pathlib import Path
 from urllib.parse import urlparse
 import ollama
 
 import feedback
 
-BASE_DIR = Path(__file__).resolve().parent
-DATA_DIR = Path(os.getenv("VAI_DATA_DIR") or BASE_DIR / "data")
-VOICEPRINT_PATH = BASE_DIR / "voiceprint.json"
+import profile_paths
+from profile_paths import DATA_DIR, VOICEPRINT_PATH
 TRANSCRIPT_PATH = DATA_DIR / "interview_transcript.json"
 
 _platform = urlparse(os.getenv("PLATFORM_API_URL", "http://127.0.0.1:8080"))
+PLATFORM_SCHEME = (_platform.scheme or "http").lower()
 PLATFORM_HOST = _platform.hostname or "127.0.0.1"
-PLATFORM_PORT = _platform.port or 8080
-PLATFORM_ID = f"http://{PLATFORM_HOST}:{PLATFORM_PORT}"  # tags local records by platform
+PLATFORM_PORT = _platform.port or (443 if PLATFORM_SCHEME == "https" else 8080)
+PLATFORM_ID = f"{PLATFORM_SCHEME}://{PLATFORM_HOST}:{PLATFORM_PORT}"  # tags local records by platform
+LOCAL_HOSTS = {"127.0.0.1", "localhost", "::1"}
 POLL_INTERVAL_SECONDS = 5
 # After this many failed AI attempts on one task, stop retrying it until the
 # node restarts, so one bad task can't block the rest of the queue.
@@ -30,7 +30,7 @@ class DraftError(Exception):
 
 def get_available_model() -> str | None:
     """Verify Ollama is running and select an installed model."""
-    preferred = os.getenv("OLLAMA_MODEL")
+    preferred = os.getenv("OLLAMA_MODEL") or "llama3.1"
     try:
         response = ollama.list()
         raw_models = response.get("models", []) if isinstance(response, dict) else getattr(response, "models", [])
@@ -44,9 +44,17 @@ def get_available_model() -> str | None:
             print("[Error] No Ollama models found. Run 'ollama pull llama3.1' first.")
             return None
 
-        if preferred and preferred in installed:
-            return preferred
-        return installed[0]
+        # "llama3.1" is installed as "llama3.1:latest"; match either form.
+        for name in installed:
+            if name == preferred or name == f"{preferred}:latest":
+                return name
+        # Never draft with an embedding-only model (e.g. nomic-embed-text).
+        chat_models = [n for n in installed if "embed" not in n.lower()]
+        if not chat_models:
+            print("[Error] Only embedding models are installed. Run 'ollama pull llama3.1' first.")
+            return None
+        print(f"[Note] Model '{preferred}' isn't installed; using '{chat_models[0]}' instead.")
+        return chat_models[0]
     except Exception as e:
         print(f"[Error] Could not connect to Ollama: {e}")
         return None
@@ -236,22 +244,113 @@ def handle_task(task: dict, voiceprint: dict, memory_text: str, model: str) -> d
     return result
 
 
-def _bridge_request(method: str, path: str, payload: dict | None = None):
+class BridgeAuthError(RuntimeError):
+    """The platform rejected this node's token or registration key."""
+
+
+_node_token: str | None = None  # this profile's token for the current platform
+
+
+def _bridge_request(method: str, path: str, payload: dict | None = None,
+                    extra_headers: dict | None = None):
     """Call the platform's bridge API directly via http.client; returns parsed JSON."""
-    conn = http.client.HTTPConnection(PLATFORM_HOST, PLATFORM_PORT, timeout=10)
+    conn_cls = http.client.HTTPSConnection if PLATFORM_SCHEME == "https" else http.client.HTTPConnection
+    conn = conn_cls(PLATFORM_HOST, PLATFORM_PORT, timeout=10)
+    headers = dict(extra_headers or {})
+    if _node_token:
+        headers["Authorization"] = f"Bearer {_node_token}"
     try:
         if payload is None:
-            conn.request(method, path)
+            conn.request(method, path, headers=headers)
         else:
-            conn.request(method, path, body=json.dumps(payload),
-                         headers={"Content-Type": "application/json"})
+            headers["Content-Type"] = "application/json"
+            conn.request(method, path, body=json.dumps(payload), headers=headers)
         resp = conn.getresponse()
         body = resp.read().decode("utf-8")
+        if resp.status in (401, 403):
+            raise BridgeAuthError(f"HTTP {resp.status}: {body}")
         if resp.status != 200:
             raise RuntimeError(f"HTTP {resp.status}: {body}")
         return json.loads(body)
     finally:
         conn.close()
+
+
+# --- Marketplace registration ----------------------------------------------
+# The platform only ever receives this public card. Interview answers, deep
+# interview notes, documents, local memory and draft history never leave
+# this machine.
+def public_card(voiceprint: dict) -> dict:
+    profile = voiceprint.get("worker_profile", {})
+    guardrails = voiceprint.get("boundaries_and_guardrails", {})
+    return {
+        "display_name": str(profile.get("display_name") or "VAI worker").strip()[:100],
+        "headline": str(profile.get("headline") or "").strip()[:200],
+        "bio_summary": str(profile.get("bio_summary") or "").strip()[:2000],
+        "domains": [d[:100] for d in _as_list(profile.get("primary_domains"))][:20],
+        "boundaries": [b[:200] for b in _as_list(guardrails.get("never_accept_tasks_involving"))][:20],
+    }
+
+
+def _load_credentials() -> dict:
+    path = profile_paths.CREDENTIALS_PATH
+    if not path.exists():
+        return {}
+    with open(path, "r", encoding="utf-8") as f:
+        return json.load(f) or {}
+
+
+def _save_credentials(creds: dict) -> None:
+    path = profile_paths.CREDENTIALS_PATH
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(".tmp")
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(creds, f, indent=2)
+    os.replace(tmp, path)
+
+
+def register_with_platform(voiceprint: dict) -> bool:
+    """Publish (or refresh) this VAI's public card and keep its token for this platform.
+
+    Tokens are stored per platform, so a token issued by a dev or staging
+    platform is never sent to a different one.
+    """
+    global _node_token
+    creds = _load_credentials()
+    _node_token = (creds.get(PLATFORM_ID) or {}).get("token")
+    reg_key = os.getenv("VAI_REGISTRATION_KEY")
+    headers = {"X-VAI-Registration-Key": reg_key} if reg_key else {}
+    try:
+        result = _bridge_request("POST", "/api/bridge/register", public_card(voiceprint), headers)
+    except BridgeAuthError as e:
+        if not _node_token:
+            print(f"[Error] The marketplace refused to register this VAI ({e}).")
+            print("Check that VAI_REGISTRATION_KEY matches the platform's key.")
+            return False
+        # The platform no longer knows this token (e.g. its database was reset).
+        print("[Bridge] The marketplace didn't recognise this VAI's token; registering again.")
+        creds.pop(PLATFORM_ID, None)
+        _save_credentials(creds)
+        _node_token = None
+        return register_with_platform(voiceprint)
+    if result.get("token"):
+        _node_token = result["token"]
+        creds[PLATFORM_ID] = {"token": _node_token, "vai_id": result.get("vai_id")}
+        _save_credentials(creds)
+        print(f"[Bridge] Registered as VAI #{result.get('vai_id')} on {PLATFORM_ID}.")
+    else:
+        print(f"[Bridge] Public card refreshed for VAI #{result.get('vai_id')} on {PLATFORM_ID}.")
+    return True
+
+
+def connect(voiceprint: dict) -> bool:
+    """Register with the platform, waiting for it if it's down. False = stop."""
+    while True:
+        try:
+            return register_with_platform(voiceprint)
+        except Exception as e:
+            print(f"[Waiting] Web platform unreachable ({e}). Retrying in {POLL_INTERVAL_SECONDS}s...")
+            time.sleep(POLL_INTERVAL_SECONDS)
 
 
 def fetch_open_tasks() -> list[dict]:
@@ -325,13 +424,32 @@ def run_bridge_loop():
     if not voiceprint:
         return
 
+    if PLATFORM_SCHEME != "https" and PLATFORM_HOST not in LOCAL_HOSTS:
+        print(f"[Error] {PLATFORM_ID} isn't HTTPS. A remote marketplace must use https:// "
+              "so this VAI's token can't be read in transit.")
+        return
+
     worker_name = voiceprint.get("worker_profile", {}).get("display_name", "Worker")
+    card = public_card(voiceprint)
 
     print("\n" + "=" * 60)
-    print(f"VAI Local Node Online | Profile: {worker_name} | Model: {model}")
-    print(f"Polling marketplace at: {PLATFORM_ID}/api/bridge")
+    print(f"VAI Local Node | {profile_paths.describe()} | Profile: {worker_name} | Model: {model}")
+    print(f"Marketplace: {PLATFORM_ID}")
+    print("Shared with the marketplace (public card only):")
+    print(f"  Name: {card['display_name']} | Headline: {card['headline']}")
+    print(f"  Areas: {'; '.join(card['domains']) or '-'}")
+    print(f"  Never accepts: {'; '.join(card['boundaries']) or '-'}")
+    print("Kept on this machine: interview answers, expertise notes, documents, memory "
+          f"and draft history ({DATA_DIR}).")
     print("Press Ctrl+C to pause your local VAI node anytime.")
     print("=" * 60 + "\n")
+
+    try:
+        if not connect(voiceprint):
+            return
+    except KeyboardInterrupt:
+        print("\nLocal VAI node paused. Goodbye!")
+        return
 
     memory = open_memory_store()
     transcript_examples = None if memory else load_interview_examples()
@@ -343,6 +461,11 @@ def run_bridge_loop():
         while True:
             try:
                 open_tasks = fetch_open_tasks()
+            except BridgeAuthError:
+                print("[Bridge] Token rejected; registering this VAI again.")
+                if not connect(voiceprint):
+                    return
+                continue
             except Exception as e:
                 print(f"[Waiting] Web platform unreachable ({e}). Retrying in {POLL_INTERVAL_SECONDS}s...")
                 time.sleep(POLL_INTERVAL_SECONDS)

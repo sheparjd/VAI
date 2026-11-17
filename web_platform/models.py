@@ -1,12 +1,14 @@
-import json
-import os
 from datetime import datetime
-from pathlib import Path
-from sqlalchemy import create_engine, Column, Integer, String, Text, DateTime, Float
+
+from sqlalchemy import (Column, DateTime, Float, ForeignKey, Integer, String, Text,
+                        create_engine, inspect, text)
 from sqlalchemy.orm import declarative_base, sessionmaker
 
-# Defaults to a local SQLite file for zero-setup demos; swap to Neon Postgres via DATABASE_URL in .env
-DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./vai_marketplace.db")
+from . import config
+
+# Defaults to a local SQLite file for zero-setup development; staging and
+# production must set DATABASE_URL (see config.py).
+DATABASE_URL = config.DATABASE_URL
 
 connect_args = {"check_same_thread": False} if DATABASE_URL.startswith("sqlite") else {}
 engine = create_engine(DATABASE_URL, connect_args=connect_args)
@@ -15,6 +17,8 @@ Base = declarative_base()
 
 
 class WorkerProfile(Base):
+    """A VAI's public card. Only what the worker's node chooses to publish lives
+    here; interview answers and other training data stay on the worker's machine."""
     __tablename__ = "worker_profiles"
 
     id = Column(Integer, primary_key=True, index=True)
@@ -24,6 +28,10 @@ class WorkerProfile(Base):
     domains = Column(Text, default="General Knowledge")
     boundaries = Column(Text, default="No live calls")
     total_earned = Column(Float, default=0.0)
+    # SHA-256 of the node's bearer token; the token itself is never stored.
+    node_token_hash = Column(String(64), unique=True, index=True, nullable=True)
+    registered_at = Column(DateTime, nullable=True)
+    last_seen_at = Column(DateTime, nullable=True)
 
 
 class MarketplaceTask(Base):
@@ -37,10 +45,12 @@ class MarketplaceTask(Base):
     draft_output = Column(Text, default="")
     ai_reasoning = Column(Text, default="")
     created_at = Column(DateTime, default=datetime.utcnow)
+    # The VAI the employer hired for this task (NULL only for legacy tasks).
+    worker_id = Column(Integer, ForeignKey("worker_profiles.id"), nullable=True, index=True)
 
 
-def _join_list(value, fallback: str) -> str:
-    """Turn a voiceprint list (or plain string) into display text."""
+def join_list(value, fallback: str) -> str:
+    """Turn a list (or plain string) into display text."""
     if isinstance(value, list):
         items = [str(v).strip() for v in value if str(v).strip()]
         return "; ".join(items) if items else fallback
@@ -49,45 +59,49 @@ def _join_list(value, fallback: str) -> str:
     return fallback
 
 
-def init_db():
-    """Create tables and seed a demo VAI profile if empty."""
-    Base.metadata.create_all(bind=engine)
-    db = SessionLocal()
-    db.query(WorkerProfile).delete()  # Clear existing profiles for demo purposes
-    if db.query(WorkerProfile).count() == 0:
-        file_path = Path(__file__).resolve().parents[1] / "local_node" / "voiceprint.json"
-        with open(file_path, "r", encoding="utf-8") as file:
-            profile_data = json.load(file)
-        profile = profile_data["worker_profile"]
-        guardrails = profile_data.get("boundaries_and_guardrails", {})
-        demo_worker = WorkerProfile(
-            display_name=profile["display_name"],
-            headline=profile["headline"],
-            bio_summary=profile["bio_summary"],
-            domains=_join_list(profile.get("primary_domains"), "General Knowledge"),
-            boundaries=_join_list(
-                guardrails.get("never_accept_tasks_involving"),
-                "No boundaries specified",
-            ),
-            total_earned=0.0
-        )
-        
-        # Point to the JSON file in the same directory as this Python script
-        #file_path = Path(__file__).parent / "worker_profile.json"
+# Columns added after the first release. Until proper migrations (Alembic)
+# arrive, missing columns are added in place so existing databases keep their data.
+_ADDED_COLUMNS = {
+    "worker_profiles": {
+        "node_token_hash": "VARCHAR(64)",
+        "registered_at": "TIMESTAMP",
+        "last_seen_at": "TIMESTAMP",
+    },
+    "marketplace_tasks": {"worker_id": "INTEGER"},
+}
 
-        # Read the file straight into a dictionary variable
-        #with open(file_path, "r", encoding="utf-8") as file:
-        #    profile_data = json.load(file)
-        #VAI_worker = WorkerProfile(
-        #    display_name=profile_data["display_name"],
-        #    headline=profile_data["headline"],
-        #    bio_summary=profile_data["bio_summary"],
-        #    domains=profile_data["domains"],
-        #    boundaries=profile_data["boundaries_and_guardrails"],
-        #    total_earned=0.0
-        #)  
-         
-        db.add(demo_worker)
-        #db.add(VAI_worker)
-        db.commit()
-    db.close()
+
+def _add_missing_columns() -> None:
+    inspector = inspect(engine)
+    with engine.begin() as conn:
+        for table, columns in _ADDED_COLUMNS.items():
+            existing = {c["name"] for c in inspector.get_columns(table)}
+            for name, sql_type in columns.items():
+                if name not in existing:
+                    conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {name} {sql_type}"))
+        if "ix_worker_profiles_node_token_hash" not in {
+                i["name"] for i in inspector.get_indexes("worker_profiles")}:
+            conn.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS ix_worker_profiles_node_token_hash "
+                              "ON worker_profiles (node_token_hash)"))
+
+
+def init_db():
+    """Create or upgrade tables. Never seeds, resets or reads worker files.
+
+    VAIs appear on the marketplace only when a worker's own node registers
+    its public card over the bridge API.
+    """
+    Base.metadata.create_all(bind=engine)
+    _add_missing_columns()
+    if config.IS_DEV:
+        # Dev only: drop demo profiles that older versions seeded at startup
+        # (they have no node, so no VAI could ever draft for them).
+        db = SessionLocal()
+        try:
+            hired = {w for (w,) in db.query(MarketplaceTask.worker_id).distinct() if w}
+            for legacy in db.query(WorkerProfile).filter(WorkerProfile.node_token_hash.is_(None)):
+                if legacy.id not in hired:
+                    db.delete(legacy)
+            db.commit()
+        finally:
+            db.close()

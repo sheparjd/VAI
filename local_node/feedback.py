@@ -10,11 +10,10 @@ training data, so it's kept here on the worker's machine:
 """
 import difflib
 import json
-import os
 from datetime import datetime
 from pathlib import Path
 
-DATA_DIR = Path(os.getenv("VAI_DATA_DIR") or Path(__file__).resolve().parent / "data")
+from profile_paths import DATA_DIR
 DRAFTS_PATH = DATA_DIR / "drafts.jsonl"
 CORRECTIONS_PATH = DATA_DIR / "corrections.jsonl"
 
